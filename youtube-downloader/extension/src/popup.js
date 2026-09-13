@@ -5,6 +5,9 @@ const SERVIDOR = "http://127.0.0.1:8756";
 // em server.py.
 const CABECALHO = { "X-YTDL-Client": "extension" };
 
+// Status em que um download ainda esta vivo, espelhando o server.py.
+const ATIVOS = ["starting", "downloading", "merging"];
+
 // Aba que ja e uma pagina de video do YouTube.
 const YT_PAGINA = /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?|shorts\/|live\/)|youtu\.be\/)/i;
 
@@ -123,18 +126,38 @@ async function vigiarServidor() {
   }
 }
 
+// Um download que comecou antes desta popup existir continua rodando no
+// servidor - ele nunca dependeu da popup. Sem reencontra-lo aqui, a janelinha
+// abre zerada, o proximo clique sobe um segundo yt-dlp em cima do primeiro, e
+// os dois travam brigando pelos mesmos arquivos .part.
+async function retomarEmAndamento() {
+  let jobs = [];
+  try {
+    const r = await fetch(`${SERVIDOR}/jobs`, { headers: CABECALHO });
+    jobs = (await r.json()).jobs ?? [];
+  } catch {
+    return;
+  }
+
+  const emAndamento = jobs.filter((j) => ATIVOS.includes(j.status)).pop();
+  if (!emAndamento) return;
+
+  baixando = true;
+  botao.disabled = true;
+  botao.textContent = "Baixando...";
+  if (emAndamento.title) titulo.textContent = emAndamento.title;
+  barra.style.display = "block";
+  acompanhar(emAndamento.id);
+}
+
 async function iniciar() {
   const [aba] = await chrome.tabs.query({ active: true, currentWindow: true });
   videos = aba ? await detectar(aba) : [];
 
   if (!videos.length) {
     titulo.textContent = "";
-    atualizarBotao();
     mostrar("Abra um vídeo do YouTube ou uma página que tenha um embutido.");
-    return;
-  }
-
-  if (videos.length > 1) {
+  } else if (videos.length > 1) {
     seletor.innerHTML = "";
     videos.forEach((v, i) => {
       const opt = document.createElement("option");
@@ -148,7 +171,9 @@ async function iniciar() {
   }
 
   atualizarBotao();
-  vigiarServidor();
+  await vigiarServidor();
+  // Vale mesmo sem video nesta aba: o download pode ter saido de outra.
+  await retomarEmAndamento();
 }
 
 // ----------------------------------------------------------------- download
@@ -221,6 +246,11 @@ botao.addEventListener("click", async () => {
     });
     const dados = await r.json();
     if (!r.ok) throw new Error(dados.error ?? "falha na requisição");
+
+    // Quem mantem o badge do icone vivo com a popup fechada.
+    chrome.runtime.sendMessage({ tipo: "acompanhar" }).catch(() => {});
+
+    if (dados.ja_em_andamento) mostrar("Este vídeo já estava baixando.");
     acompanhar(dados.id);
   } catch (e) {
     mostrar(e.message, "erro");
