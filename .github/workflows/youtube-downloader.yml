@@ -1,0 +1,48 @@
+# Um workflow por projeto, cada um filtrado pelo proprio caminho. Mexer num
+# projeto nao roda a suite dos outros, e projeto novo e arquivo novo - nada
+# de uma matriz central que todo mundo precisa editar.
+name: youtube-downloader
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'youtube-downloader/**'
+      - '.github/workflows/youtube-downloader.yml'
+  pull_request:
+    paths:
+      - 'youtube-downloader/**'
+      - '.github/workflows/youtube-downloader.yml'
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: youtube-downloader/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: youtube-downloader/server/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      # A suite nao toca a rede: sobe o servidor de verdade numa porta
+      # efemera e fala com ele por HTTP.
+      - run: pytest -q
+
+  imagem:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: youtube-downloader/server
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
