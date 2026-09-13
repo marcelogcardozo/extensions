@@ -294,7 +294,13 @@ def test_download_duplicado_reaproveita_o_job(base_url, jobs_limpos):
     """
     url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     server.set_job(
-        "jaexiste", status="downloading", percent=12.0, url=url, criado=time.time()
+        "jaexiste",
+        status="downloading",
+        percent=12.0,
+        url=url,
+        qualidade="melhor",
+        nome=None,
+        criado=time.time(),
     )
 
     codigo, corpo = pedir(
@@ -315,7 +321,7 @@ def test_job_terminado_nao_bloqueia_nova_tentativa():
     """Depois de um erro, clicar de novo tem que comecar um download novo."""
     url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     server.set_job("falhou", status="error", url=url, finalizado=time.time())
-    assert server.job_ativo_para(url) is None
+    assert server.job_ativo_para(url, "melhor", None) is None
 
 
 @pytest.mark.usefixtures("jobs_limpos")
@@ -527,7 +533,14 @@ def test_download_entra_na_fila_em_vez_de_comecar_na_hora(base_url, jobs_limpos)
 @pytest.mark.usefixtures("jobs_limpos")
 def test_video_esperando_na_fila_nao_e_enfileirado_de_novo(base_url):
     url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-    server.set_job("esperando", status="queued", url=url, criado=time.time())
+    server.set_job(
+        "esperando",
+        status="queued",
+        url=url,
+        qualidade="melhor",
+        nome=None,
+        criado=time.time(),
+    )
 
     codigo, corpo = pedir(
         f"{base_url}/download",
@@ -576,11 +589,19 @@ def test_cancelar_quem_esta_na_fila_nao_espera_o_hook(base_url):
 @pytest.mark.usefixtures("jobs_limpos")
 def test_trabalhador_ignora_pedido_cancelado_enquanto_esperava():
     server.set_job("desistiu", status="canceled", criado=time.time())
-    server.fila.put(("desistiu", "https://www.youtube.com/watch?v=jNQXAC9IVRw", []))
+    server.fila.put(
+        {
+            "id": "desistiu",
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "cookies": [],
+            "nome": None,
+            "qualidade": "melhor",
+        }
+    )
 
     # Uma volta do trabalhador, sem thread: nao pode chamar o download.
-    job_id, _, _ = server.fila.get_nowait()
-    assert server.get_job(job_id).get("status") != "queued"
+    pedido = server.fila.get_nowait()
+    assert server.get_job(pedido["id"]).get("status") != "queued"
 
 
 # --------------------------------------------------------- nome do arquivo
@@ -639,9 +660,9 @@ def test_nome_escolhido_chega_limpo_na_fila(base_url):
     )
     assert codigo == 200
 
-    _, _, _, nome = server.fila.get_nowait()
+    pedido = server.fila.get_nowait()
     server.fila.task_done()
-    assert nome == "Aula 04 VPC"
+    assert pedido["nome"] == "Aula 04 VPC"
 
 
 # ------------------------------------------------------- ja esta na pasta
@@ -660,3 +681,114 @@ def test_baixados_lista_so_o_que_esta_pronto(pastas):
 def test_baixados_ignora_pasta_inexistente(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path / "nao-existe")
     assert server.listar_baixados() == []
+
+
+# ---------------------------------------------------------------- qualidade
+
+
+@pytest.mark.parametrize("qualidade", ["720", "1080"])
+def test_qualidade_limitada_nunca_faz_upgrade_silencioso(qualidade):
+    """Pedir 720p e receber um arquivo 4K seria pior do que falhar.
+
+    Toda a cadeia carrega o limite; nao ha degrau final sem restricao.
+    """
+    for ramo in server.FORMATOS[qualidade].split("/"):
+        assert f"height<={qualidade}" in ramo
+
+
+def test_so_audio_nunca_pede_video():
+    for ramo in server.FORMATOS["audio"].split("/"):
+        assert ramo.startswith("bestaudio")
+
+
+def test_qualidade_tem_a_mesma_rede_de_seguranca_do_melhor():
+    """O "best" sozinho nao serve de fallback - veja o comentario do FORMATO."""
+    ramos = server.FORMATOS["720"].split("/")
+    assert ramos[0].startswith("bestvideo[height<=720][ext=mp4]")
+    assert ramos.index("best[height<=720]") < len(ramos) - 1
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_qualidade_escolhida_chega_na_fila(base_url):
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "qualidade": "720",
+        },
+    )
+    assert codigo == 200
+    assert server.get_job(corpo["id"])["qualidade"] == "720"
+    assert server.fila.get_nowait()["qualidade"] == "720"
+
+
+@pytest.mark.parametrize("pedida", ["4k", "", None, "../etc"])
+@pytest.mark.usefixtures("jobs_limpos")
+def test_qualidade_desconhecida_cai_no_padrao(base_url, pedida):
+    """Extensao mais velha nao pode ver o download ser recusado."""
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "qualidade": pedida,
+        },
+    )
+    assert codigo == 200
+    assert server.get_job(corpo["id"])["qualidade"] == server.QUALIDADE_PADRAO
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_mesma_url_em_qualidade_diferente_nao_e_duplicata(base_url):
+    """720p e "so audio" do mesmo video dao dois arquivos, nao um.
+
+    Formatos diferentes gravam parciais diferentes, entao nao ha colisao a
+    evitar - e recusar o segundo devolvia um job que nao era o pedido.
+    """
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    server.set_job(
+        "video",
+        status="downloading",
+        url=url,
+        qualidade="720",
+        nome=None,
+        criado=time.time(),
+    )
+
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"url": url, "qualidade": "audio"},
+    )
+
+    assert codigo == 200
+    assert corpo["id"] != "video"
+    assert corpo.get("ja_em_andamento") is None
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_mesmo_pedido_repetido_continua_sendo_duplicata(base_url):
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    server.set_job(
+        "ja",
+        status="downloading",
+        url=url,
+        qualidade="720",
+        nome="Aula 04",
+        criado=time.time(),
+    )
+
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"url": url, "qualidade": "720", "nome": "Aula 04"},
+    )
+
+    assert codigo == 200
+    assert corpo["id"] == "ja"
+    assert corpo["ja_em_andamento"] is True

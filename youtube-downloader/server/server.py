@@ -129,17 +129,27 @@ def listar_jobs():
     return itens
 
 
-def job_ativo_para(url):
-    """Id de um download em andamento para esta URL, se existir.
+def job_ativo_para(url, qualidade, nome):
+    """Id de um download em andamento que daria exatamente este arquivo.
 
     Sem isto, reabrir a popup e clicar de novo sobe um segundo yt-dlp
     escrevendo nos MESMOS arquivos .part do primeiro. Os dois se atropelam e
     o download trava pela metade - que e exatamente o sintoma de "fechei a
     janelinha e sobrou um .part na pasta".
+
+    A chave e o trio, e nao so a URL: o mesmo video em 720p e em "so audio"
+    da dois arquivos diferentes, com formatos diferentes, sem parcial em
+    comum. Comparar so a URL recusava o segundo pedido e devolvia um job que
+    nao era o pedido.
     """
     with jobs_lock:
         for job_id, job in jobs.items():
-            if job.get("url") == url and job.get("status") in ATIVOS:
+            if (
+                job.get("status") in ATIVOS
+                and job.get("url") == url
+                and job.get("qualidade") == qualidade
+                and job.get("nome") == nome
+            ):
                 return job_id
     return None
 
@@ -283,6 +293,36 @@ FORMATO = "/".join([
 ])
 # fmt: on
 
+
+def cadeia_ate(altura):
+    """A mesma logica do FORMATO, limitada a uma altura maxima.
+
+    Nao existe degrau final sem limite, de proposito: pedir 720p e receber 4K
+    seria pior do que falhar. Na pratica o YouTube oferece 720p para quase
+    tudo, e quando nao oferece o erro ja vem com a lista de formatos.
+    """
+    return "/".join(
+        [
+            f"bestvideo[height<={altura}][ext=mp4]+bestaudio[ext=m4a]",
+            f"bestvideo*[height<={altura}]+bestaudio",
+            f"best[height<={altura}]",
+            f"bestvideo*[height<={altura}]",
+        ]
+    )
+
+
+# So audio fica em m4a, o container nativo do YouTube: sai na hora e sem
+# perda. Converter para MP3 seria recodificar um audio ja comprimido - mais
+# lento e com menos qualidade do que o arquivo de origem.
+FORMATOS = {
+    "melhor": FORMATO,
+    "1080": cadeia_ate(1080),
+    "720": cadeia_ate(720),
+    "audio": "bestaudio[ext=m4a]/bestaudio",
+}
+QUALIDADE_PADRAO = "melhor"
+
+
 # O YouTube protege as URLs com um desafio em JavaScript (o parametro "n"). O
 # yt-dlp nao resolve isso sozinho: delega a um runtime JS externo, via pacote
 # yt-dlp-ejs. So o "deno" vem habilitado por padrao, e a maioria das maquinas
@@ -409,13 +449,20 @@ def percentual(plano, baixado, total_faixa):
 def trabalhador():
     """Tira um pedido da fila por vez e baixa. Um destes por SIMULTANEOS."""
     while True:
-        job_id, url, cookies, nome = fila.get()
+        pedido = fila.get()
+        job_id = pedido["id"]
         try:
             # Cancelado enquanto esperava: nem chega a comecar.
             if get_job(job_id).get("status") != "queued":
                 continue
             set_job(job_id, status="starting")
-            download(job_id, url, cookies, nome)
+            download(
+                job_id,
+                pedido["url"],
+                pedido["cookies"],
+                pedido["nome"],
+                pedido["qualidade"],
+            )
         except Exception as exc:  # noqa: BLE001 - um worker nunca pode morrer
             set_job(job_id, status="error", error=str(exc), finalizado=time.time())
         finally:
@@ -427,7 +474,7 @@ def iniciar_trabalhadores():
         threading.Thread(target=trabalhador, daemon=True).start()
 
 
-def download(job_id, url, cookies, nome=None):
+def download(job_id, url, cookies, nome=None, qualidade=QUALIDADE_PADRAO):
     # O progresso e do download inteiro, nao de cada faixa: somando os
     # tamanhos previstos, a barra anda de 0 a 100 uma vez so.
     plano = {"faixas": 1, "total": None, "concluidos": 0, "bytes_prontos": 0}
@@ -472,7 +519,7 @@ def download(job_id, url, cookies, nome=None):
     opts = {
         "outtmpl": modelo_de_saida(nome),
         "paths": {"home": str(OUTPUT_DIR), "temp": str(TRABALHO_DIR)},
-        "format": FORMATO,
+        "format": FORMATOS.get(qualidade, FORMATO),
         "merge_output_format": "mp4",
         "progress_hooks": [hook],
         "noprogress": True,
@@ -674,6 +721,11 @@ class Handler(BaseHTTPRequestHandler):
             url = corpo["url"]
             cookies = corpo.get("cookies") or []
             nome = nome_de_arquivo(corpo.get("nome"))
+            # Qualidade desconhecida cai no padrao em vez de recusar: o pedido
+            # em si e valido, so veio de uma extensao mais velha.
+            qualidade = corpo.get("qualidade")
+            if qualidade not in FORMATOS:
+                qualidade = QUALIDADE_PADRAO
         except KeyError:
             self._send(400, {"error": "corpo invalido"}, origin)
             return
@@ -686,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Ja tem um download desta URL rodando: devolve o mesmo job em vez de
         # subir um segundo yt-dlp para brigar pelos mesmos arquivos .part.
-        em_andamento = job_ativo_para(url)
+        em_andamento = job_ativo_para(url, qualidade, nome)
         if em_andamento:
             self._send(200, {"id": em_andamento, "ja_em_andamento": True}, origin)
             return
@@ -698,9 +750,20 @@ class Handler(BaseHTTPRequestHandler):
             percent=None,
             title="",
             url=url,
+            qualidade=qualidade,
+            nome=nome,
             criado=time.time(),
         )
-        fila.put((job_id, url, cookies, nome))
+        # Um dicionario em vez de tupla: a tupla crescia a cada feature nova.
+        fila.put(
+            {
+                "id": job_id,
+                "url": url,
+                "cookies": cookies,
+                "nome": nome,
+                "qualidade": qualidade,
+            }
+        )
         self._send(200, {"id": job_id}, origin)
 
 

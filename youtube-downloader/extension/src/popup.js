@@ -24,6 +24,8 @@ const titulo = document.getElementById("titulo");
 const seletor = document.getElementById("seletor");
 const campoNome = document.getElementById("nome");
 const avisoBaixado = document.getElementById("ja-baixado");
+const campoQualidade = document.getElementById("qualidade");
+const opcoes = document.querySelector(".opcoes");
 const secAndamento = document.getElementById("sec-andamento");
 const listaAndamento = document.getElementById("lista-andamento");
 const secInterrompidos = document.getElementById("sec-interrompidos");
@@ -158,6 +160,21 @@ async function coletarCookies() {
   }));
 }
 
+// A qualidade escolhida fica gravada: num curso de dezenas de aulas, ninguem
+// quer reescolher "720p" toda vez. E e ela que "Continuar" usa tambem.
+async function lembrarQualidade() {
+  try {
+    const { qualidade } = await chrome.storage.local.get("qualidade");
+    if (qualidade) campoQualidade.value = qualidade;
+  } catch {
+    // Sem storage, vale o padrao do <select>.
+  }
+}
+
+campoQualidade.addEventListener("change", () => {
+  chrome.storage.local.set({ qualidade: campoQualidade.value }).catch(() => {});
+});
+
 async function baixar(id, nome = "") {
   const r = await fetch(`${SERVIDOR}/download`, {
     method: "POST",
@@ -165,6 +182,7 @@ async function baixar(id, nome = "") {
     body: JSON.stringify({
       url: urlDoVideo(id),
       nome,
+      qualidade: campoQualidade.value,
       cookies: await coletarCookies(),
     }),
   });
@@ -292,7 +310,7 @@ function atualizarBotao(ativos) {
   botao.hidden = false;
   titulo.hidden = false;
   avisoBaixado.hidden = true;
-  campoNome.style.display = videos.length ? "block" : "none";
+  opcoes.style.display = videos.length ? "flex" : "none";
 
   if (!videos.length) {
     botao.disabled = true;
@@ -313,7 +331,7 @@ function atualizarBotao(ativos) {
     escolhido && ativos.some((j) => (j.url || "").includes(escolhido.id));
   if (jaBaixando) {
     botao.hidden = true;
-    campoNome.style.display = "none";
+    opcoes.style.display = "none";
     // Com varios videos na pagina o titulo nao repete nada - ele diz quantos
     // sao, e o seletor continua servindo para escolher outro.
     titulo.hidden = videos.length === 1;
@@ -431,6 +449,7 @@ botao.addEventListener("click", async () => {
 });
 
 async function iniciar() {
+  await lembrarQualidade();
   const [aba] = await chrome.tabs.query({ active: true, currentWindow: true });
   videos = aba ? await detectar(aba) : [];
 

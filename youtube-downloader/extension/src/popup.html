@@ -30,10 +30,15 @@
     padding: 6px;
     font: inherit;
   }
+  .opcoes { display: none; gap: 6px; margin-bottom: 10px; }
+  #qualidade {
+    flex: 0 0 auto;
+    padding: 7px 4px;
+    font: inherit;
+  }
   #nome {
-    display: none;
-    width: 100%;
-    margin-bottom: 10px;
+    flex: 1;
+    min-width: 0;
     padding: 7px 8px;
     font: inherit;
     color: inherit;
@@ -172,8 +177,16 @@
 <div id="titulo"></div>
 <select id="seletor"></select>
 <div id="ja-baixado" hidden>Este vídeo já está na sua pasta.</div>
-<input id="nome" type="text" maxlength="120" autocomplete="off"
-       spellcheck="false" placeholder="Renomear o arquivo (opcional)">
+<div class="opcoes">
+  <select id="qualidade">
+    <option value="melhor">Melhor</option>
+    <option value="1080">1080p</option>
+    <option value="720">720p</option>
+    <option value="audio">Só áudio</option>
+  </select>
+  <input id="nome" type="text" maxlength="120" autocomplete="off"
+         spellcheck="false" placeholder="Renomear (opcional)">
+</div>
 <button id="baixar" disabled>Procurando vídeo...</button>
 <div id="status"></div>
 
