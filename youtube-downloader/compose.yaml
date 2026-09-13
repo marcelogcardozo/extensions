@@ -1,0 +1,27 @@
+services:
+  server:
+    build: ./server
+    image: youtube-downloader-server
+    container_name: youtube-downloader
+
+    # O "127.0.0.1:" na frente NAO e decorativo: sem ele o Docker publica a
+    # porta em 0.0.0.0 e qualquer maquina da rede local alcanca o servidor.
+    # Toda a defesa do server.py pressupoe que so o seu navegador chega ate
+    # aqui - o cabecalho que ele exige nao e segredo nenhum.
+    ports:
+      - "127.0.0.1:${YTDL_PORT:-8756}:8756"
+
+    environment:
+      # Dentro do container escuta em tudo; quem restringe e o publish acima.
+      YTDL_HOST: "0.0.0.0"
+      YTDL_PORT: "8756"
+      YTDL_OUTPUT_DIR: "/downloads"
+      # Caminho do host, so para a popup mostrar algo que voce consegue abrir.
+      YTDL_DISPLAY_DIR: "${YTDL_OUTPUT_DIR:-./downloads}"
+      # 0 desliga a atualizacao do yt-dlp na subida do container.
+      YTDL_AUTO_UPDATE: "${YTDL_AUTO_UPDATE:-1}"
+
+    volumes:
+      - "${YTDL_OUTPUT_DIR:-./downloads}:/downloads"
+
+    restart: unless-stopped
