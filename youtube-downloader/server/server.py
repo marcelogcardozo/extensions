@@ -38,6 +38,18 @@ OUTPUT_DIR = Path(
 # "salvo em ..." aponta para um lugar que o usuario nao consegue abrir.
 DISPLAY_DIR = os.environ.get("YTDL_DISPLAY_DIR") or str(OUTPUT_DIR)
 
+# Onde o download acontece de fato. A pasta de saida so recebe o MP4 pronto:
+# as trilhas separadas (".f137.mp4"), os parciais (".part") e o estado de
+# fragmentos (".ytdl") vivem e morrem aqui dentro.
+#
+# Antes disso tudo caia junto na pasta do usuario, que passava a misturar
+# resultado com canteiro de obras - e, quando algo dava errado, o Explorer era
+# a unica interface que sobrava para entender o estrago.
+#
+# Precisa ser DENTRO da pasta de saida: o passo final e um rename, e rename
+# entre volumes diferentes vira copia (num arquivo de 800 MB isso se nota).
+TRABALHO_DIR = OUTPUT_DIR / ".em-andamento"
+
 # So aceita URLs de video do YouTube; qualquer outra coisa e recusada antes
 # de chegar perto do yt-dlp.
 YOUTUBE_RE = re.compile(
@@ -53,8 +65,30 @@ ATIVOS = ("starting", "downloading", "merging")
 # ninguem estava olhando.
 RETENCAO_S = 3600
 
+# O id do video tem 11 caracteres e aparece entre colchetes no nome do
+# arquivo. E por ele que a gente descobre a que video um parcial pertence.
+ID_NO_NOME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
+ID_NA_URL = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
+
+# Na pasta de trabalho tudo e parcial por definicao. Ja na pasta de saida
+# (onde versoes antigas deixaram sobras) so estes padroes contam - assim um
+# MP4 pronto nunca entra na lista nem corre risco de ser apagado.
+PARCIAL_NA_SAIDA = re.compile(r"\.f\d+\.|\.part$|\.ytdl$|\.part-Frag\d+$")
+
 jobs = {}
 jobs_lock = threading.Lock()
+
+# Jobs que o usuario mandou parar. O progress hook confere a cada batida.
+cancelados = set()
+
+
+class Cancelado(Exception):  # noqa: N818 - sinal de controle, nao erro
+    """O usuario pediu para parar este download.
+
+    Sem sufixo "Error" de proposito: nada deu errado aqui, e o nome descreve o
+    que aconteceu. Levantar de dentro do progress hook e como o yt-dlp aborta
+    um download em andamento.
+    """
 
 
 def set_job(job_id, **fields):
@@ -87,6 +121,66 @@ def job_ativo_para(url):
             if job.get("url") == url and job.get("status") in ATIVOS:
                 return job_id
     return None
+
+
+def _parciais():
+    """Arquivos de trabalho existentes, agrupados por video."""
+    achados = {}
+    for pasta, tudo_e_parcial in ((TRABALHO_DIR, True), (OUTPUT_DIR, False)):
+        if not pasta.is_dir():
+            continue
+        for arquivo in pasta.iterdir():
+            if not arquivo.is_file():
+                continue
+            if not tudo_e_parcial and not PARCIAL_NA_SAIDA.search(arquivo.name):
+                continue
+            achado = ID_NO_NOME.search(arquivo.name)
+            if achado:
+                achados.setdefault(achado.group(1), []).append(arquivo)
+    return achados
+
+
+def listar_interrompidos():
+    """Downloads que pararam no meio e ainda dao para retomar.
+
+    Sem isto, depois que os parciais sairam da pasta de saida eles ficariam
+    invisiveis - bom para a prateleira, pessimo para quem tinha 500 MB de
+    aula ja baixados.
+    """
+    with jobs_lock:
+        em_curso = {
+            m.group(1)
+            for j in jobs.values()
+            if j.get("status") in ATIVOS and (m := ID_NA_URL.search(j.get("url") or ""))
+        }
+
+    saida = []
+    for video_id, arquivos in _parciais().items():
+        if video_id in em_curso:
+            continue
+        titulo = arquivos[0].name.split(f"[{video_id}]")[0].strip()
+        saida.append(
+            {
+                "id": video_id,
+                "titulo": titulo or video_id,
+                # Bytes, e nao porcentagem: sem consultar o YouTube de novo nao da
+                # para saber o total, e porcentagem inventada e pior que numero
+                # honesto.
+                "bytes": sum(a.stat().st_size for a in arquivos),
+                "arquivos": len(arquivos),
+            }
+        )
+    return sorted(saida, key=lambda i: i["titulo"].lower())
+
+
+def descartar(video_id):
+    """Apaga os arquivos de trabalho de um video. Nunca toca num MP4 pronto."""
+    apagados = 0
+    for arquivo in _parciais().get(video_id, []):
+        with contextlib.suppress(OSError):
+            arquivo.unlink()
+            apagados += 1
+    return apagados
 
 
 def limpar_jobs_antigos():
@@ -202,6 +296,12 @@ def listar_formatos(url, opts):
 
 def download(job_id, url, cookies):
     def hook(d):
+        with jobs_lock:
+            parar = job_id in cancelados
+        if parar:
+            # Levantar dentro do hook e como o yt-dlp aborta um download.
+            raise Cancelado
+
         if d["status"] == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate")
             done = d.get("downloaded_bytes", 0)
@@ -214,7 +314,8 @@ def download(job_id, url, cookies):
     registrador = Registrador()
 
     opts = {
-        "outtmpl": str(OUTPUT_DIR / "%(title)s [%(id)s].%(ext)s"),
+        "outtmpl": "%(title)s [%(id)s].%(ext)s",
+        "paths": {"home": str(OUTPUT_DIR), "temp": str(TRABALHO_DIR)},
         "format": FORMATO,
         "merge_output_format": "mp4",
         "progress_hooks": [hook],
@@ -227,12 +328,17 @@ def download(job_id, url, cookies):
         opts["cookiefile"] = arquivo_cookies
 
     try:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        TRABALHO_DIR.mkdir(parents=True, exist_ok=True)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             set_job(job_id, title=info.get("title", ""))
             ydl.download([url])
         set_job(job_id, status="done", percent=100, finalizado=time.time())
+
+    except Cancelado:
+        # O parcial fica na pasta de trabalho de proposito: vira um item
+        # "interrompido", que da para retomar ou descartar depois.
+        set_job(job_id, status="canceled", percent=None, finalizado=time.time())
 
     except Exception as exc:  # noqa: BLE001 - queremos mostrar qualquer erro na popup
         partes = [str(exc)]
@@ -259,6 +365,9 @@ def download(job_id, url, cookies):
         )
 
     finally:
+        with jobs_lock:
+            cancelados.discard(job_id)
+
         # Os cookies sao credenciais: nao deixar sobrando no disco.
         if arquivo_cookies:
             with contextlib.suppress(OSError):
@@ -334,7 +443,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/jobs":
             limpar_jobs_antigos()
-            self._send(200, {"jobs": listar_jobs(), "pasta": DISPLAY_DIR}, origin)
+            self._send(
+                200,
+                {
+                    "jobs": listar_jobs(),
+                    "interrompidos": listar_interrompidos(),
+                    "pasta": DISPLAY_DIR,
+                },
+                origin,
+            )
             return
 
         if parsed.path == "/status":
@@ -354,16 +471,40 @@ class Handler(BaseHTTPRequestHandler):
             return
         origin = self.headers.get("Origin")
 
-        if urlparse(self.path).path != "/download":
+        rota = urlparse(self.path).path
+        if rota not in ("/download", "/cancelar", "/descartar"):
             self._send(404, {"error": "rota desconhecida"}, origin)
             return
 
         length = int(self.headers.get("Content-Length", 0))
         try:
             corpo = json.loads(self.rfile.read(length))
+        except ValueError:
+            self._send(400, {"error": "corpo invalido"}, origin)
+            return
+
+        if rota == "/cancelar":
+            job_id = corpo.get("id", "")
+            if get_job(job_id).get("status") not in ATIVOS:
+                self._send(404, {"error": "nao ha download ativo com esse id"}, origin)
+                return
+            with jobs_lock:
+                cancelados.add(job_id)
+            self._send(200, {"ok": True}, origin)
+            return
+
+        if rota == "/descartar":
+            video_id = corpo.get("id", "")
+            if not ID_NO_NOME.fullmatch(f"[{video_id}]"):
+                self._send(400, {"error": "id de video invalido"}, origin)
+                return
+            self._send(200, {"apagados": descartar(video_id)}, origin)
+            return
+
+        try:
             url = corpo["url"]
             cookies = corpo.get("cookies") or []
-        except (ValueError, KeyError):
+        except KeyError:
             self._send(400, {"error": "corpo invalido"}, origin)
             return
 
@@ -405,6 +546,7 @@ class Servidor(ThreadingHTTPServer):
 
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    TRABALHO_DIR.mkdir(parents=True, exist_ok=True)
     try:
         servidor = Servidor((HOST, PORT), Handler)
     except OSError:

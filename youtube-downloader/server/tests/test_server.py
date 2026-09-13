@@ -337,3 +337,113 @@ def test_job_terminado_ha_muito_tempo_sai_da_memoria(jobs_limpos):
     server.limpar_jobs_antigos()
 
     assert sorted(jobs_limpos) == ["recente", "rodando"]
+
+
+# ------------------------------------------- parciais e downloads interrompidos
+
+
+@pytest.fixture
+def pastas(tmp_path, monkeypatch):
+    """Aponta as pastas do servidor para um diretorio descartavel."""
+    saida = tmp_path / "saida"
+    trabalho = saida / ".em-andamento"
+    trabalho.mkdir(parents=True)
+    monkeypatch.setattr(server, "OUTPUT_DIR", saida)
+    monkeypatch.setattr(server, "TRABALHO_DIR", trabalho)
+    return saida, trabalho
+
+
+def criar(pasta, nome, tamanho=10):
+    arquivo = pasta / nome
+    arquivo.write_bytes(b"x" * tamanho)
+    return arquivo
+
+
+def test_pasta_de_trabalho_fica_dentro_da_pasta_de_saida():
+    """O passo final e um rename - entre volumes diferentes viraria copia.
+
+    Num arquivo de 800 MB a diferenca entre renomear e copiar se nota.
+    """
+    assert server.TRABALHO_DIR.parent == server.OUTPUT_DIR
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_interrompidos_agrupa_arquivos_do_mesmo_video(pastas):
+    saida, trabalho = pastas
+    criar(trabalho, "Aula 2 [fj8XgF2__0M].f137.mp4", 500)
+    criar(trabalho, "Aula 2 [fj8XgF2__0M].f140.m4a.part", 200)
+    criar(saida, "Aula 1 [aqz-KE-bpKQ].mp4", 900)  # pronto: nao e interrompido
+
+    itens = server.listar_interrompidos()
+
+    assert len(itens) == 1
+    assert itens[0]["id"] == "fj8XgF2__0M"
+    assert itens[0]["titulo"] == "Aula 2"
+    assert itens[0]["bytes"] == 700
+    assert itens[0]["arquivos"] == 2
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_video_baixando_agora_nao_aparece_como_interrompido(pastas):
+    _, trabalho = pastas
+    criar(trabalho, "Aula 2 [fj8XgF2__0M].f137.mp4")
+    server.set_job(
+        "ativo",
+        status="downloading",
+        url="https://www.youtube.com/watch?v=fj8XgF2__0M",
+        criado=time.time(),
+    )
+    assert server.listar_interrompidos() == []
+
+
+def test_descartar_nao_toca_no_video_pronto(pastas):
+    """A garantia que faz o botao "Descartar" ser seguro de clicar."""
+    saida, trabalho = pastas
+    parcial = criar(trabalho, "Aula 2 [fj8XgF2__0M].f140.m4a.part")
+    intermediario = criar(saida, "Aula 2 [fj8XgF2__0M].f137.mp4")
+    pronto = criar(saida, "Aula 2 [fj8XgF2__0M].mp4")
+    alheio = criar(saida, "Aula 9 [aqz-KE-bpKQ].f137.mp4")
+
+    assert server.descartar("fj8XgF2__0M") == 2
+
+    assert not parcial.exists()
+    assert not intermediario.exists()
+    assert pronto.exists()  # o que importa: o video baixado sobrevive
+    assert alheio.exists()  # e o parcial de outro video tambem
+
+
+def test_descartar_recusa_id_invalido(base_url):
+    codigo, _ = pedir(
+        f"{base_url}/descartar",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"id": "../../qualquer-coisa"},
+    )
+    assert codigo == 400
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_cancelar_marca_o_job_para_parar(base_url):
+    server.set_job("rodando", status="downloading", criado=time.time())
+    try:
+        codigo, _ = pedir(
+            f"{base_url}/cancelar",
+            metodo="POST",
+            headers={**EXTENSAO, "Content-Type": "application/json"},
+            corpo={"id": "rodando"},
+        )
+        assert codigo == 200
+        assert "rodando" in server.cancelados
+    finally:
+        server.cancelados.discard("rodando")
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_cancelar_job_que_nao_esta_rodando(base_url):
+    codigo, _ = pedir(
+        f"{base_url}/cancelar",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"id": "naoexiste"},
+    )
+    assert codigo == 404
