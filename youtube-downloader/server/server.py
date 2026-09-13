@@ -18,6 +18,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -44,6 +45,14 @@ YOUTUBE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Status em que um download ainda esta vivo. Fora deles, ele terminou.
+ATIVOS = ("starting", "downloading", "merging")
+
+# Por quanto tempo um job terminado fica na memoria. E o que permite a popup
+# e o service worker verem o desfecho de um download que acabou enquanto
+# ninguem estava olhando.
+RETENCAO_S = 3600
+
 jobs = {}
 jobs_lock = threading.Lock()
 
@@ -56,6 +65,42 @@ def set_job(job_id, **fields):
 def get_job(job_id):
     with jobs_lock:
         return dict(jobs.get(job_id, {}))
+
+
+def listar_jobs():
+    """Todos os jobs conhecidos, do mais antigo para o mais novo."""
+    with jobs_lock:
+        itens = [{"id": i, **j} for i, j in jobs.items()]
+    return sorted(itens, key=lambda j: j.get("criado", 0))
+
+
+def job_ativo_para(url):
+    """Id de um download em andamento para esta URL, se existir.
+
+    Sem isto, reabrir a popup e clicar de novo sobe um segundo yt-dlp
+    escrevendo nos MESMOS arquivos .part do primeiro. Os dois se atropelam e
+    o download trava pela metade - que e exatamente o sintoma de "fechei a
+    janelinha e sobrou um .part na pasta".
+    """
+    with jobs_lock:
+        for job_id, job in jobs.items():
+            if job.get("url") == url and job.get("status") in ATIVOS:
+                return job_id
+    return None
+
+
+def limpar_jobs_antigos():
+    """Jobs terminados nao precisam ficar na memoria para sempre."""
+    agora = time.time()
+    with jobs_lock:
+        velhos = [
+            job_id
+            for job_id, job in jobs.items()
+            if job.get("status") not in ATIVOS
+            and agora - job.get("finalizado", agora) > RETENCAO_S
+        ]
+        for job_id in velhos:
+            del jobs[job_id]
 
 
 def escrever_cookies(cookies):
@@ -187,7 +232,7 @@ def download(job_id, url, cookies):
             info = ydl.extract_info(url, download=False)
             set_job(job_id, title=info.get("title", ""))
             ydl.download([url])
-        set_job(job_id, status="done", percent=100)
+        set_job(job_id, status="done", percent=100, finalizado=time.time())
 
     except Exception as exc:  # noqa: BLE001 - queremos mostrar qualquer erro na popup
         partes = [str(exc)]
@@ -206,7 +251,12 @@ def download(job_id, url, cookies):
                 "\n\nAvisos do yt-dlp:\n" + "\n".join(registrador.mensagens[:10])
             )
 
-        set_job(job_id, status="error", error="".join(partes))
+        set_job(
+            job_id,
+            status="error",
+            error="".join(partes),
+            finalizado=time.time(),
+        )
 
     finally:
         # Os cookies sao credenciais: nao deixar sobrando no disco.
@@ -282,6 +332,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "pasta": DISPLAY_DIR}, origin)
             return
 
+        if parsed.path == "/jobs":
+            limpar_jobs_antigos()
+            self._send(200, {"jobs": listar_jobs(), "pasta": DISPLAY_DIR}, origin)
+            return
+
         if parsed.path == "/status":
             job_id = parse_qs(parsed.query).get("id", [""])[0]
             job = get_job(job_id)
@@ -316,8 +371,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "nao e uma URL de video do YouTube"}, origin)
             return
 
+        limpar_jobs_antigos()
+
+        # Ja tem um download desta URL rodando: devolve o mesmo job em vez de
+        # subir um segundo yt-dlp para brigar pelos mesmos arquivos .part.
+        em_andamento = job_ativo_para(url)
+        if em_andamento:
+            self._send(200, {"id": em_andamento, "ja_em_andamento": True}, origin)
+            return
+
         job_id = uuid.uuid4().hex
-        set_job(job_id, status="starting", percent=None, title="")
+        set_job(
+            job_id,
+            status="starting",
+            percent=None,
+            title="",
+            url=url,
+            criado=time.time(),
+        )
         threading.Thread(
             target=download, args=(job_id, url, cookies), daemon=True
         ).start()

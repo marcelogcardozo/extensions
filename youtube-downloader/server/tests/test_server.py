@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -262,3 +263,77 @@ def test_health_informa_a_pasta_de_destino(base_url, monkeypatch):
     codigo, corpo = pedir(f"{base_url}/health", headers=EXTENSAO)
     assert codigo == 200
     assert corpo["pasta"] == "C:/Users/fulano/Downloads/YouTube"
+
+
+# ------------------------------------------------- downloads em andamento
+
+
+@pytest.fixture
+def jobs_limpos():
+    """Cada teste comeca e termina sem job nenhum na memoria do servidor."""
+    server.jobs.clear()
+    yield server.jobs
+    server.jobs.clear()
+
+
+def test_download_duplicado_reaproveita_o_job(base_url, jobs_limpos):
+    """Clicar de novo no mesmo video nao pode subir um segundo yt-dlp.
+
+    Dois downloads simultaneos da mesma URL escrevem nos MESMOS arquivos
+    .part e travam os dois. Foi assim que um download real ficou pela metade:
+    a popup fechou, perdeu o rastro do job, e o segundo clique brigou com o
+    primeiro.
+    """
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    server.set_job(
+        "jaexiste", status="downloading", percent=12.0, url=url, criado=time.time()
+    )
+
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"url": url},
+    )
+
+    assert codigo == 200
+    assert corpo["id"] == "jaexiste"
+    assert corpo["ja_em_andamento"] is True
+    assert list(jobs_limpos) == ["jaexiste"]  # nenhum job novo foi criado
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_job_terminado_nao_bloqueia_nova_tentativa():
+    """Depois de um erro, clicar de novo tem que comecar um download novo."""
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    server.set_job("falhou", status="error", url=url, finalizado=time.time())
+    assert server.job_ativo_para(url) is None
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_jobs_lista_em_ordem_e_informa_a_pasta(base_url):
+    """E por aqui que a popup reencontra um download que ja estava rolando."""
+    server.set_job("velho", status="done", percent=100, criado=1.0)
+    server.set_job("novo", status="downloading", percent=40.0, criado=2.0)
+
+    codigo, corpo = pedir(f"{base_url}/jobs", headers=EXTENSAO)
+
+    assert codigo == 200
+    assert [j["id"] for j in corpo["jobs"]] == ["velho", "novo"]
+    assert corpo["pasta"] == server.DISPLAY_DIR
+
+
+def test_jobs_exige_o_cabecalho_da_extensao(base_url):
+    codigo, _ = pedir(f"{base_url}/jobs")
+    assert codigo == 403
+
+
+def test_job_terminado_ha_muito_tempo_sai_da_memoria(jobs_limpos):
+    agora = time.time()
+    server.set_job("antigo", status="done", finalizado=agora - server.RETENCAO_S - 1)
+    server.set_job("recente", status="done", finalizado=agora)
+    server.set_job("rodando", status="downloading", criado=agora)
+
+    server.limpar_jobs_antigos()
+
+    assert sorted(jobs_limpos) == ["recente", "rodando"]
