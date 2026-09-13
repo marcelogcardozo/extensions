@@ -447,3 +447,48 @@ def test_cancelar_job_que_nao_esta_rodando(base_url):
         corpo={"id": "naoexiste"},
     )
     assert codigo == 404
+
+
+# ------------------------------------------------------ faixas e progresso
+
+
+@pytest.mark.parametrize(
+    ("formato", "esperado"),
+    [
+        ({"vcodec": "avc1.64001f", "acodec": "none"}, "video"),
+        ({"vcodec": "none", "acodec": "mp4a.40.2"}, "audio"),
+        ({"vcodec": "avc1", "acodec": "mp4a"}, "completo"),
+        ({"vcodec": "none", "acodec": "none"}, ""),
+        ({"vcodec": None, "acodec": None}, ""),
+        ({}, ""),
+    ],
+)
+def test_faixa_do_formato(formato, esperado):
+    assert server.faixa_do_formato(formato) == esperado
+
+
+def test_progresso_cobre_as_duas_faixas_sem_reiniciar():
+    """A barra ia a 100 na trilha de video e voltava a zero no audio.
+
+    O YouTube entrega video e audio separados e o yt-dlp baixa duas vezes;
+    medir so a faixa atual fazia a segunda parecer um recomeco.
+    """
+    plano = {"faixas": 2, "total": 1000, "concluidos": 0, "bytes_prontos": 0}
+
+    assert server.percentual(plano, 400, 800) == 40.0  # metade do video
+
+    plano["bytes_prontos"] = 800  # video terminou, audio comeca do zero
+    assert server.percentual(plano, 0, 200) == 80.0  # nao volta para zero
+    assert server.percentual(plano, 200, 200) == 100.0
+
+
+def test_progresso_sem_tamanho_previsto_mede_so_a_faixa():
+    plano = {"faixas": 2, "total": None, "concluidos": 0, "bytes_prontos": 0}
+    assert server.percentual(plano, 50, 200) == 25.0
+    assert server.percentual(plano, 50, None) is None
+
+
+def test_progresso_nunca_passa_de_cem():
+    """total_bytes as vezes e estimativa, e estimativa erra para baixo."""
+    plano = {"faixas": 1, "total": 100, "concluidos": 0, "bytes_prontos": 0}
+    assert server.percentual(plano, 140, 100) == 100.0

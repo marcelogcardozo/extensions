@@ -294,7 +294,49 @@ def listar_formatos(url, opts):
     return linhas
 
 
+def faixa_do_formato(formato):
+    """Se este formato e a trilha de video, a de audio, ou um arquivo unico.
+
+    O YouTube entrega video e audio separados, entao o yt-dlp baixa duas
+    vezes - e o progresso vai a 100% duas vezes. Sem dizer qual faixa esta
+    vindo, a segunda volta parece o download recomecando do zero.
+    """
+    tem_video = (formato.get("vcodec") or "none") != "none"
+    tem_audio = (formato.get("acodec") or "none") != "none"
+    if tem_video and tem_audio:
+        return "completo"
+    if tem_video:
+        return "video"
+    if tem_audio:
+        return "audio"
+    return ""
+
+
+def tamanho_do_formato(formato):
+    return formato.get("filesize") or formato.get("filesize_approx")
+
+
+def percentual(plano, baixado, total_faixa):
+    """Progresso do download inteiro, e nao da faixa atual.
+
+    Com os tamanhos previstos das duas faixas, a barra anda de 0 a 100 uma vez
+    so. Sem eles, so resta medir a faixa que esta vindo - e ai ela vai a 100
+    duas vezes, o que o rotulo da etapa passa a explicar.
+    """
+    if plano["total"]:
+        bruto = (plano["bytes_prontos"] + baixado) / plano["total"] * 100
+    elif total_faixa:
+        bruto = baixado / total_faixa * 100
+    else:
+        return None
+    return round(min(bruto, 100), 1)
+
+
 def download(job_id, url, cookies):
+    # O progresso e do download inteiro, nao de cada faixa: somando os
+    # tamanhos previstos, a barra anda de 0 a 100 uma vez so.
+    plano = {"faixas": 1, "total": None, "concluidos": 0, "bytes_prontos": 0}
+
     def hook(d):
         with jobs_lock:
             parar = job_id in cancelados
@@ -302,13 +344,26 @@ def download(job_id, url, cookies):
             # Levantar dentro do hook e como o yt-dlp aborta um download.
             raise Cancelado
 
+        faixa = faixa_do_formato(d.get("info_dict") or {})
+
         if d["status"] == "downloading":
-            total = d.get("total_bytes") or d.get("total_bytes_estimate")
-            done = d.get("downloaded_bytes", 0)
-            pct = round(done / total * 100, 1) if total else None
-            set_job(job_id, status="downloading", percent=pct)
+            total_faixa = d.get("total_bytes") or d.get("total_bytes_estimate")
+            set_job(
+                job_id,
+                status="downloading",
+                percent=percentual(plano, d.get("downloaded_bytes", 0), total_faixa),
+                faixa=faixa,
+            )
+
         elif d["status"] == "finished":
-            set_job(job_id, status="merging", percent=100)
+            plano["concluidos"] += 1
+            plano["bytes_prontos"] += d.get("total_bytes") or d.get(
+                "downloaded_bytes", 0
+            )
+            # So e hora de juntar quando TODAS as faixas chegaram. Antes disso,
+            # marcar "merging" fazia a tela mostrar baixar -> juntar -> baixar.
+            if plano["concluidos"] >= plano["faixas"]:
+                set_job(job_id, status="merging", percent=100)
 
     arquivo_cookies = escrever_cookies(cookies) if cookies else None
     registrador = Registrador()
@@ -332,6 +387,12 @@ def download(job_id, url, cookies):
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             set_job(job_id, title=info.get("title", ""))
+
+            faixas = info.get("requested_formats") or [info]
+            tamanhos = [tamanho_do_formato(f) for f in faixas]
+            plano["faixas"] = len(faixas)
+            plano["total"] = sum(tamanhos) if all(tamanhos) else None
+
             ydl.download([url])
         set_job(job_id, status="done", percent=100, finalizado=time.time())
 

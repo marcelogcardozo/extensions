@@ -53,11 +53,17 @@ function tamanho(bytes) {
 // O que o download esta fazendo agora, em palavras. Antes eram fragmentos
 // soltos ("iniciando...", "juntando...") jogados na direita da linha, onde
 // nao tinham largura garantida e eram os primeiros a ser cortados.
+const FAIXAS = { video: "Baixando vídeo", audio: "Baixando áudio" };
+
 function etapaDoJob(job) {
   if (job.status === "starting") return "Consultando o YouTube...";
   if (job.status === "merging") return "Juntando vídeo e áudio...";
-  if (job.percent == null) return "Baixando...";
-  return `Baixando · ${Math.round(job.percent)}%`;
+
+  // O YouTube entrega as faixas separadas, entao o yt-dlp baixa duas vezes.
+  // Dizer qual esta vindo e o que impede a segunda parecer um recomeco.
+  const rotulo = FAIXAS[job.faixa] ?? "Baixando";
+  if (job.percent == null) return `${rotulo}...`;
+  return `${rotulo} · ${Math.round(job.percent)}%`;
 }
 
 function urlDoVideo(id) {
