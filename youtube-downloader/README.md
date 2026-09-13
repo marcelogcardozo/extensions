@@ -93,10 +93,25 @@ mostrar a barra — mesmo que você tenha trocado de aba.
 Clicar em baixar de novo no mesmo vídeo não duplica nada: o servidor devolve o
 download que já está rodando.
 
+Antes de baixar, dá para **renomear o arquivo** no campo logo acima do botão.
+Vazio, nada muda: vale o título que a fonte publicou. Útil porque aula gravada
+costuma vir como `2026 07 26 08 05 04 Nome do Curso` — carimbo de data na
+frente e nada dizendo qual aula é.
+
+Se o vídeo **já está na sua pasta**, a popup avisa e o botão vira "Baixar de
+novo", em vez de você descobrir depois de 800 MB.
+
+Downloads entram numa **fila**: por padrão um de cada vez. Dois arquivos
+grandes dividindo a mesma banda terminam os dois mais tarde do que se tivessem
+ido em sequência — então dá para enfileirar um módulo inteiro e sair de perto.
+Quem espera mostra a posição ("Na fila · 2º").
+
 A popup tem duas listas abaixo do botão:
 
-- **Em andamento** — um item por download, com barra de progresso e um `×`
-  para cancelar.
+- **Em andamento** — um item por download, com barra de progresso, velocidade
+  e tempo restante (`Baixando vídeo · 63% · 12,4 MB/s · 4 min`) e um `×` para
+  cancelar. Como o YouTube entrega vídeo e áudio separados, a etapa diz qual
+  faixa está vindo; a barra mede o download inteiro e não reinicia entre elas.
 - **Interrompidos** — o que parou no meio (cancelado, servidor derrubado, erro
   de rede), com **Continuar** e **Descartar**. Continuar retoma de onde parou:
   um download de 500 MB interrompido volta dos 500 MB, não do zero.
@@ -119,6 +134,7 @@ dois modos de execução.
 | `YTDL_PORT` | `8756` | Porta no host. |
 | `YTDL_HOST` | `127.0.0.1` | Interface de escuta. O compose usa `0.0.0.0` dentro do container — veja *Segurança*. |
 | `YTDL_DISPLAY_DIR` | igual ao `OUTPUT_DIR` | Só para a popup mostrar um caminho que você consegue abrir: dentro do container o destino real é `/downloads`, que não existe no Windows. |
+| `YTDL_SIMULTANEOS` | `1` | Quantos downloads correm ao mesmo tempo. |
 | `YTDL_AUTO_UPDATE` | `1` | `0` não atualiza o `yt-dlp` na subida do container. |
 
 **Ao mudar a porta**, mude também `SERVIDOR` em
@@ -161,6 +177,12 @@ liga o `node` explicitamente:
 Sem isso a extração devolve só as imagens da miniatura e o download morre com
 `Requested format is not available` — uma mensagem que não dá nenhuma pista da
 causa real.
+
+**Por que a fila é de um por vez.** Não é limitação técnica — é que banda é
+um recurso fixo. Três downloads de 800 MB em paralelo não terminam antes;
+terminam os três juntos, mais tarde, e você fica sem nenhum arquivo utilizável
+até o fim. Em sequência, o primeiro fica pronto em um terço do tempo. Suba
+`YTDL_SIMULTANEOS` se a sua banda sobrar.
 
 **Por que os parciais não ficam na pasta de saída.** Ela misturava três
 coisas que ninguém distingue olhando o Explorer: vídeo pronto, trilha
