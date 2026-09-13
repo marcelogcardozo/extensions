@@ -315,6 +315,39 @@ def listar_formatos(url, opts):
     return linhas
 
 
+# Caracteres que o Windows recusa em nome de arquivo, mais os de controle.
+# A barra sai junto de proposito: nome de arquivo nunca pode virar caminho.
+INVALIDOS_NO_NOME = re.compile(r'[<>:"/\\|?*]')
+LIMITE_DO_NOME = 120
+
+
+def nome_de_arquivo(bruto):
+    """Limpa um nome vindo da extensao para virar nome de arquivo.
+
+    Devolve None quando nao sobra nada aproveitavel - e ai vale o titulo que
+    o YouTube informou, que e o comportamento de sempre.
+    """
+    limpo = INVALIDOS_NO_NOME.sub("", bruto or "")
+    # Caracteres de controle fora. isprintable() diz isso melhor que uma faixa
+    # hexadecimal, e nao derruba acento nenhum.
+    limpo = "".join(c for c in limpo if c.isprintable())
+    limpo = " ".join(limpo.split())
+    # O Windows tambem recusa ponto e espaco no fim do nome.
+    limpo = limpo.strip(". ")[:LIMITE_DO_NOME].strip(". ")
+    return limpo or None
+
+
+def modelo_de_saida(nome):
+    """Template do yt-dlp para o arquivo final.
+
+    O "[id]" fica sempre: e por ele que a varredura de parciais descobre a
+    que video cada arquivo pertence. E o nome escolhido tem os "%" dobrados,
+    senao o yt-dlp leria "%(title)s" digitado por engano como template.
+    """
+    inicio = nome.replace("%", "%%") if nome else "%(title)s"
+    return f"{inicio} [%(id)s].%(ext)s"
+
+
 def faixa_do_formato(formato):
     """Se este formato e a trilha de video, a de audio, ou um arquivo unico.
 
@@ -356,13 +389,13 @@ def percentual(plano, baixado, total_faixa):
 def trabalhador():
     """Tira um pedido da fila por vez e baixa. Um destes por SIMULTANEOS."""
     while True:
-        job_id, url, cookies = fila.get()
+        job_id, url, cookies, nome = fila.get()
         try:
             # Cancelado enquanto esperava: nem chega a comecar.
             if get_job(job_id).get("status") != "queued":
                 continue
             set_job(job_id, status="starting")
-            download(job_id, url, cookies)
+            download(job_id, url, cookies, nome)
         except Exception as exc:  # noqa: BLE001 - um worker nunca pode morrer
             set_job(job_id, status="error", error=str(exc), finalizado=time.time())
         finally:
@@ -374,7 +407,7 @@ def iniciar_trabalhadores():
         threading.Thread(target=trabalhador, daemon=True).start()
 
 
-def download(job_id, url, cookies):
+def download(job_id, url, cookies, nome=None):
     # O progresso e do download inteiro, nao de cada faixa: somando os
     # tamanhos previstos, a barra anda de 0 a 100 uma vez so.
     plano = {"faixas": 1, "total": None, "concluidos": 0, "bytes_prontos": 0}
@@ -411,7 +444,7 @@ def download(job_id, url, cookies):
     registrador = Registrador()
 
     opts = {
-        "outtmpl": "%(title)s [%(id)s].%(ext)s",
+        "outtmpl": modelo_de_saida(nome),
         "paths": {"home": str(OUTPUT_DIR), "temp": str(TRABALHO_DIR)},
         "format": FORMATO,
         "merge_output_format": "mp4",
@@ -613,6 +646,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             url = corpo["url"]
             cookies = corpo.get("cookies") or []
+            nome = nome_de_arquivo(corpo.get("nome"))
         except KeyError:
             self._send(400, {"error": "corpo invalido"}, origin)
             return
@@ -639,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             url=url,
             criado=time.time(),
         )
-        fila.put((job_id, url, cookies))
+        fila.put((job_id, url, cookies, nome))
         self._send(200, {"id": job_id}, origin)
 
 

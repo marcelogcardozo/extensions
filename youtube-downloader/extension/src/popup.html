@@ -30,6 +30,18 @@
     padding: 6px;
     font: inherit;
   }
+  #nome {
+    display: none;
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 7px 8px;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 1px solid var(--linha);
+    border-radius: 6px;
+  }
+  #nome::placeholder { opacity: .5; }
 
   button {
     font: inherit;
@@ -149,6 +161,7 @@
 <h1>YouTube Downloader Helper</h1>
 <div id="titulo"></div>
 <select id="seletor"></select>
+<input id="nome" type="text" maxlength="120" autocomplete="off" spellcheck="false">
 <button id="baixar" disabled>Procurando vídeo...</button>
 <div id="status"></div>
 

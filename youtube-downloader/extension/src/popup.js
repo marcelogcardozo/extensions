@@ -22,6 +22,7 @@ const botao = document.getElementById("baixar");
 const status = document.getElementById("status");
 const titulo = document.getElementById("titulo");
 const seletor = document.getElementById("seletor");
+const campoNome = document.getElementById("nome");
 const secAndamento = document.getElementById("sec-andamento");
 const listaAndamento = document.getElementById("lista-andamento");
 const secInterrompidos = document.getElementById("sec-interrompidos");
@@ -119,6 +120,14 @@ function videoEscolhido() {
   return videos.length > 1 ? videos[seletor.selectedIndex] : videos[0];
 }
 
+// Vazio, o campo nao muda nada: vale o titulo do YouTube. O placeholder
+// mostra qual e esse titulo, para dar para decidir se vale renomear - os
+// titulos de aula costumam vir com carimbo de data na frente.
+function atualizarPlaceholder() {
+  const escolhido = videoEscolhido();
+  campoNome.placeholder = escolhido?.titulo || "Nome do arquivo (opcional)";
+}
+
 // ----------------------------------------------------------------- servidor
 
 // O YouTube exige cookies para liberar o download. Lemos pela API do Chrome
@@ -136,11 +145,15 @@ async function coletarCookies() {
   }));
 }
 
-async function baixar(id) {
+async function baixar(id, nome = "") {
   const r = await fetch(`${SERVIDOR}/download`, {
     method: "POST",
     headers: JSON_CABECALHO,
-    body: JSON.stringify({ url: urlDoVideo(id), cookies: await coletarCookies() }),
+    body: JSON.stringify({
+      url: urlDoVideo(id),
+      nome,
+      cookies: await coletarCookies(),
+    }),
   });
   const dados = await r.json();
   if (!r.ok) throw new Error(dados.error ?? "falha na requisição");
@@ -214,7 +227,9 @@ function criarLinhaInterrompida(item) {
   linha.querySelector(".continuar").addEventListener("click", async (e) => {
     e.target.disabled = true;
     try {
-      await baixar(item.id);
+      // O nome original, e nao o que estiver no campo: o parcial no disco
+      // usa esse nome, e mudar de nome faria o download recomecar do zero.
+      await baixar(item.id, item.titulo);
     } catch (erro) {
       mostrar(erro.message, "erro");
       e.target.disabled = false;
@@ -259,6 +274,7 @@ function atualizarBotao(ativos) {
   ativosAgora = ativos;
   botao.hidden = false;
   titulo.hidden = false;
+  campoNome.style.display = videos.length ? "block" : "none";
 
   if (!videos.length) {
     botao.disabled = true;
@@ -279,6 +295,7 @@ function atualizarBotao(ativos) {
     escolhido && ativos.some((j) => (j.url || "").includes(escolhido.id));
   if (jaBaixando) {
     botao.hidden = true;
+    campoNome.style.display = "none";
     // Com varios videos na pagina o titulo nao repete nada - ele diz quantos
     // sao, e o seletor continua servindo para escolher outro.
     titulo.hidden = videos.length === 1;
@@ -378,7 +395,7 @@ botao.addEventListener("click", async () => {
   mostrar("Falando com o servidor local...");
 
   try {
-    const dados = await baixar(video.id);
+    const dados = await baixar(video.id, campoNome.value);
     if (dados.ja_em_andamento) mostrar("Este vídeo já estava baixando.");
   } catch (e) {
     mostrar(e.message, "erro");
@@ -403,12 +420,16 @@ async function iniciar() {
       seletor.append(opt);
     });
     seletor.style.display = "block";
-    seletor.addEventListener("change", () => atualizarBotao(ativosAgora));
+    seletor.addEventListener("change", () => {
+      atualizarPlaceholder();
+      atualizarBotao(ativosAgora);
+    });
     titulo.textContent = `${videos.length} vídeos nesta página:`;
   } else {
     titulo.textContent = videos[0].titulo || videos[0].id;
   }
 
+  atualizarPlaceholder();
   atualizarBotao([]);
 
   // Vale mesmo sem video nesta aba: pode haver download de outra rolando, ou

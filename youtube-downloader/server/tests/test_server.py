@@ -581,3 +581,64 @@ def test_trabalhador_ignora_pedido_cancelado_enquanto_esperava():
     # Uma volta do trabalhador, sem thread: nao pode chamar o download.
     job_id, _, _ = server.fila.get_nowait()
     assert server.get_job(job_id).get("status") != "queued"
+
+
+# --------------------------------------------------------- nome do arquivo
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        ("Aula 04 - VPC", "Aula 04 - VPC"),
+        ("  Aula   04  ", "Aula 04"),
+        ("AWS: Redes", "AWS Redes"),
+        ("Aula 4.", "Aula 4"),  # Windows recusa ponto no fim
+        ("Aula 04 — Sub-redes e ACLs", "Aula 04 — Sub-redes e ACLs"),
+        ("", None),
+        ("   ", None),
+        ("...", None),
+        (None, None),
+    ],
+)
+def test_nome_de_arquivo(bruto, esperado):
+    assert server.nome_de_arquivo(bruto) == esperado
+
+
+def test_nome_escolhido_nunca_vira_caminho():
+    """Um nome de arquivo nao pode escapar da pasta de saida."""
+    barra = chr(92)
+    assert server.nome_de_arquivo(f"..{barra}..{barra}Windows") == "Windows"
+    assert server.nome_de_arquivo("../../etc/passwd") == "etcpasswd"
+
+
+def test_nome_e_cortado_no_limite():
+    assert len(server.nome_de_arquivo("a" * 500)) == server.LIMITE_DO_NOME
+
+
+def test_modelo_dobra_o_por_cento():
+    """Senao o yt-dlp leria um "%" digitado como inicio de template."""
+    assert server.modelo_de_saida("100% AWS") == "100%% AWS [%(id)s].%(ext)s"
+
+
+@pytest.mark.parametrize("nome", [None, "Aula 04"])
+def test_modelo_sempre_guarda_o_id_no_nome(nome):
+    """A varredura de parciais descobre o video pelo [id] no nome."""
+    assert "[%(id)s]" in server.modelo_de_saida(nome)
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_nome_escolhido_chega_limpo_na_fila(base_url):
+    codigo, _ = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "nome": "Aula 04 / VPC ",
+        },
+    )
+    assert codigo == 200
+
+    _, _, _, nome = server.fila.get_nowait()
+    server.fila.task_done()
+    assert nome == "Aula 04 VPC"
