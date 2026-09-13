@@ -7,7 +7,7 @@ const CABECALHO = { "X-YTDL-Client": "extension" };
 const JSON_CABECALHO = { "Content-Type": "application/json", ...CABECALHO };
 
 // Status em que um download ainda esta vivo, espelhando o server.py.
-const ATIVOS = ["starting", "downloading", "merging"];
+const ATIVOS = ["queued", "starting", "downloading", "merging"];
 
 // Por quanto tempo o desfecho de um download continua sendo noticia na tela.
 const NOTICIA_S = 60;
@@ -56,6 +56,9 @@ function tamanho(bytes) {
 const FAIXAS = { video: "Baixando vídeo", audio: "Baixando áudio" };
 
 function etapaDoJob(job) {
+  if (job.status === "queued") {
+    return job.posicao > 1 ? `Na fila · ${job.posicao}º` : "Na fila · é o próximo";
+  }
   if (job.status === "starting") return "Consultando o YouTube...";
   if (job.status === "merging") return "Juntando vídeo e áudio...";
 

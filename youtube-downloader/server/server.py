@@ -15,6 +15,7 @@ navegador nem o sistema de arquivos do host.
 import contextlib
 import json
 import os
+import queue
 import re
 import tempfile
 import threading
@@ -57,8 +58,15 @@ YOUTUBE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Quantos downloads rodam ao mesmo tempo. Um, por padrao: dois downloads de
+# 800 MB dividem a mesma banda e terminam os dois mais tarde do que se
+# tivessem ido em sequencia.
+SIMULTANEOS = max(1, int(os.environ.get("YTDL_SIMULTANEOS", "1")))
+
 # Status em que um download ainda esta vivo. Fora deles, ele terminou.
-ATIVOS = ("starting", "downloading", "merging")
+# "queued" entra aqui de proposito: um video esperando na fila ja conta como
+# pedido, entao clicar de novo nele nao pode enfileirar uma segunda copia.
+ATIVOS = ("queued", "starting", "downloading", "merging")
 
 # Por quanto tempo um job terminado fica na memoria. E o que permite a popup
 # e o service worker verem o desfecho de um download que acabou enquanto
@@ -81,6 +89,8 @@ jobs_lock = threading.Lock()
 # Jobs que o usuario mandou parar. O progress hook confere a cada batida.
 cancelados = set()
 
+fila = queue.Queue()
+
 
 class Cancelado(Exception):  # noqa: N818 - sinal de controle, nao erro
     """O usuario pediu para parar este download.
@@ -102,10 +112,21 @@ def get_job(job_id):
 
 
 def listar_jobs():
-    """Todos os jobs conhecidos, do mais antigo para o mais novo."""
+    """Todos os jobs conhecidos, do mais antigo para o mais novo.
+
+    Quem esta esperando ganha a posicao na fila, para a tela poder dizer
+    "2o da fila" em vez de so "parado".
+    """
     with jobs_lock:
         itens = [{"id": i, **j} for i, j in jobs.items()]
-    return sorted(itens, key=lambda j: j.get("criado", 0))
+    itens.sort(key=lambda j: j.get("criado", 0))
+
+    esperando = 0
+    for job in itens:
+        if job.get("status") == "queued":
+            esperando += 1
+            job["posicao"] = esperando
+    return itens
 
 
 def job_ativo_para(url):
@@ -332,6 +353,27 @@ def percentual(plano, baixado, total_faixa):
     return round(min(bruto, 100), 1)
 
 
+def trabalhador():
+    """Tira um pedido da fila por vez e baixa. Um destes por SIMULTANEOS."""
+    while True:
+        job_id, url, cookies = fila.get()
+        try:
+            # Cancelado enquanto esperava: nem chega a comecar.
+            if get_job(job_id).get("status") != "queued":
+                continue
+            set_job(job_id, status="starting")
+            download(job_id, url, cookies)
+        except Exception as exc:  # noqa: BLE001 - um worker nunca pode morrer
+            set_job(job_id, status="error", error=str(exc), finalizado=time.time())
+        finally:
+            fila.task_done()
+
+
+def iniciar_trabalhadores():
+    for _ in range(SIMULTANEOS):
+        threading.Thread(target=trabalhador, daemon=True).start()
+
+
 def download(job_id, url, cookies):
     # O progresso e do download inteiro, nao de cada faixa: somando os
     # tamanhos previstos, a barra anda de 0 a 100 uma vez so.
@@ -546,11 +588,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if rota == "/cancelar":
             job_id = corpo.get("id", "")
-            if get_job(job_id).get("status") not in ATIVOS:
+            estado = get_job(job_id).get("status")
+            if estado not in ATIVOS:
                 self._send(404, {"error": "nao ha download ativo com esse id"}, origin)
                 return
-            with jobs_lock:
-                cancelados.add(job_id)
+
+            if estado == "queued":
+                # Ainda na fila: nao ha yt-dlp para abortar, so tirar da vez.
+                set_job(job_id, status="canceled", finalizado=time.time())
+            else:
+                with jobs_lock:
+                    cancelados.add(job_id)
             self._send(200, {"ok": True}, origin)
             return
 
@@ -585,15 +633,13 @@ class Handler(BaseHTTPRequestHandler):
         job_id = uuid.uuid4().hex
         set_job(
             job_id,
-            status="starting",
+            status="queued",
             percent=None,
             title="",
             url=url,
             criado=time.time(),
         )
-        threading.Thread(
-            target=download, args=(job_id, url, cookies), daemon=True
-        ).start()
+        fila.put((job_id, url, cookies))
         self._send(200, {"id": job_id}, origin)
 
 
@@ -608,6 +654,7 @@ class Servidor(ThreadingHTTPServer):
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     TRABALHO_DIR.mkdir(parents=True, exist_ok=True)
+    iniciar_trabalhadores()
     try:
         servidor = Servidor((HOST, PORT), Handler)
     except OSError:

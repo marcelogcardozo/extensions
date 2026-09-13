@@ -268,12 +268,20 @@ def test_health_informa_a_pasta_de_destino(base_url, monkeypatch):
 # ------------------------------------------------- downloads em andamento
 
 
+def esvaziar_fila():
+    while not server.fila.empty():
+        server.fila.get_nowait()
+        server.fila.task_done()
+
+
 @pytest.fixture
 def jobs_limpos():
-    """Cada teste comeca e termina sem job nenhum na memoria do servidor."""
+    """Cada teste comeca e termina sem job nem pedido pendente."""
     server.jobs.clear()
+    esvaziar_fila()
     yield server.jobs
     server.jobs.clear()
+    esvaziar_fila()
 
 
 def test_download_duplicado_reaproveita_o_job(base_url, jobs_limpos):
@@ -492,3 +500,84 @@ def test_progresso_nunca_passa_de_cem():
     """total_bytes as vezes e estimativa, e estimativa erra para baixo."""
     plano = {"faixas": 1, "total": 100, "concluidos": 0, "bytes_prontos": 0}
     assert server.percentual(plano, 140, 100) == 100.0
+
+
+# ------------------------------------------------------------------- fila
+
+
+def test_download_entra_na_fila_em_vez_de_comecar_na_hora(base_url, jobs_limpos):
+    """Quem baixa e o trabalhador, nao o handler do POST.
+
+    E o que permite limitar quantos downloads correm juntos: dois arquivos de
+    800 MB dividindo a mesma banda terminam os dois mais tarde do que se
+    tivessem ido em sequencia.
+    """
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"},
+    )
+
+    assert codigo == 200
+    assert jobs_limpos[corpo["id"]]["status"] == "queued"
+    assert server.fila.qsize() == 1
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_video_esperando_na_fila_nao_e_enfileirado_de_novo(base_url):
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    server.set_job("esperando", status="queued", url=url, criado=time.time())
+
+    codigo, corpo = pedir(
+        f"{base_url}/download",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"url": url},
+    )
+
+    assert codigo == 200
+    assert corpo["id"] == "esperando"
+    assert server.fila.qsize() == 0
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_posicao_na_fila_segue_a_ordem_de_chegada():
+    server.set_job("terceiro", status="queued", criado=3.0)
+    server.set_job("primeiro", status="queued", criado=1.0)
+    server.set_job("baixando", status="downloading", criado=2.0)
+    server.set_job("segundo", status="queued", criado=2.5)
+
+    posicoes = {j["id"]: j.get("posicao") for j in server.listar_jobs()}
+
+    assert posicoes["primeiro"] == 1
+    assert posicoes["segundo"] == 2
+    assert posicoes["terceiro"] == 3
+    assert posicoes["baixando"] is None  # quem ja comecou nao tem posicao
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_cancelar_quem_esta_na_fila_nao_espera_o_hook(base_url):
+    """Nao ha yt-dlp para abortar ainda, entao o cancelamento e imediato."""
+    server.set_job("esperando", status="queued", criado=time.time())
+
+    codigo, _ = pedir(
+        f"{base_url}/cancelar",
+        metodo="POST",
+        headers={**EXTENSAO, "Content-Type": "application/json"},
+        corpo={"id": "esperando"},
+    )
+
+    assert codigo == 200
+    assert server.get_job("esperando")["status"] == "canceled"
+    assert "esperando" not in server.cancelados
+
+
+@pytest.mark.usefixtures("jobs_limpos")
+def test_trabalhador_ignora_pedido_cancelado_enquanto_esperava():
+    server.set_job("desistiu", status="canceled", criado=time.time())
+    server.fila.put(("desistiu", "https://www.youtube.com/watch?v=jNQXAC9IVRw", []))
+
+    # Uma volta do trabalhador, sem thread: nao pode chamar o download.
+    job_id, _, _ = server.fila.get_nowait()
+    assert server.get_job(job_id).get("status") != "queued"

@@ -12,7 +12,7 @@
 
 const SERVIDOR = "http://127.0.0.1:8756";
 const CABECALHO = { "X-YTDL-Client": "extension" };
-const ATIVOS = ["starting", "downloading", "merging"];
+const ATIVOS = ["queued", "starting", "downloading", "merging"];
 const INTERVALO_MS = 1000;
 
 // So avisa de downloads que terminaram ha pouco. Sem esta janela, o worker
