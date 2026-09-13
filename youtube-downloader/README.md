@@ -12,8 +12,10 @@ acontece na sua máquina; nada é enviado para fora dela.
 │  popup    │ ─────────────────► │  server.py   │──►│ yt-dlp │──► pasta de saída
 │ (extensão)│   URL + cookies    │ 127.0.0.1    │   │ +ffmpeg│
 │           │ ◄───────────────── │   :8756      │   └────────┘
-└───────────┘   GET /status      └──────────────┘
-                  progresso
+└───────────┘   GET /jobs        └──────────────┘
+      ▲           progresso
+      │
+  badge no ícone (service worker, com a popup fechada)
 ```
 
 A extensão sozinha não dá conta: o YouTube entrega vídeo e áudio em faixas DASH
@@ -83,6 +85,14 @@ Se a página tiver mais de um vídeo, aparece uma lista para escolher. Se você
 abrir a popup com o servidor desligado, ela avisa e fica checando sozinha —
 basta subir o servidor e ela conecta em até 1 segundo.
 
+**Pode fechar a popup.** O download roda no servidor, não nela. Enquanto anda,
+o ícone da extensão mostra a porcentagem num badge, e o Chrome avisa quando
+termina. Ao reabrir a popup, ela reencontra o download em andamento e volta a
+mostrar a barra — mesmo que você tenha trocado de aba.
+
+Clicar em baixar de novo no mesmo vídeo não duplica nada: o servidor devolve o
+download que já está rodando.
+
 O arquivo sai em MP4, na melhor qualidade disponível, com o nome
 `Título [id].mp4`.
 
@@ -139,6 +149,18 @@ liga o `node` explicitamente:
 Sem isso a extração devolve só as imagens da miniatura e o download morre com
 `Requested format is not available` — uma mensagem que não dá nenhuma pista da
 causa real.
+
+**Por que existe um service worker.** A popup é efêmera: some assim que você
+clica fora dela, e com ela sumia qualquer sinal de que havia um download
+rolando. Reabrindo, o botão aparecia zerado — então clicar de novo parecia a
+coisa certa a fazer, e subia um segundo `yt-dlp` escrevendo nos **mesmos**
+arquivos `.part` do primeiro. Os dois se atropelavam e o download travava pela
+metade, deixando um `.part` que não cresce mais.
+
+A correção é em duas camadas: o servidor recusa o download duplicado
+(`/download` devolve o job que já existe) e o service worker mantém o progresso
+visível no badge do ícone sem a popup precisar estar aberta. A primeira impede
+o estrago; a segunda remove o motivo de tentar.
 
 **Vídeos embutidos.** Quando o vídeo está num `<iframe>` apontando para
 `youtube.com/embed/<id>`, a URL da aba não serve. A extensão injeta um script
@@ -215,6 +237,7 @@ URL e a cadeia de formatos.
 | `Requested format is not available` | Quase sempre é o desafio JS. No Docker não deveria acontecer; no modo nativo, confira se o `node` está no PATH e se o `yt-dlp-ejs` está instalado. O erro vem com os avisos do `yt-dlp` e a lista de formatos. |
 | `403` no log do servidor | Versões desencontradas: reinicie o servidor e clique em ⟳ na extensão. |
 | `A porta 8756 já está em uso` | Já tem um servidor rodando (talvez um container). `docker compose down` ou feche a janela do `.bat`. |
+| Um `.part` que não cresce mais | Sobra de duas tentativas simultâneas do mesmo vídeo, um bug corrigido na 1.2.0. Apague os arquivos daquele vídeo (`.f*.mp4`, `.f*.m4a`, `.part`) e baixe de novo — o `.part` está corrompido e o `yt-dlp` tentaria continuar de onde parou. |
 | Erro de extração qualquer | Atualize o `yt-dlp` (abaixo). |
 
 ## Quando parar de funcionar
