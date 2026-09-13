@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Downloader Helper",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Baixa o video da aba atual do YouTube usando o yt-dlp rodando localmente.",
   "permissions": [
     "activeTab",

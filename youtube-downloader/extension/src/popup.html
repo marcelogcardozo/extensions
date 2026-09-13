@@ -2,14 +2,20 @@
 <meta charset="utf-8">
 <title>YouTube Downloader Helper</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+    --vermelho: #c00;
+    --linha: color-mix(in srgb, currentColor 13%, transparent);
+    --fraco: color-mix(in srgb, currentColor 8%, transparent);
+  }
   body {
-    width: 320px;
+    width: 340px;
     margin: 0;
     padding: 14px;
     font: 13px/1.45 system-ui, sans-serif;
   }
   h1 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+
   #titulo {
     font-size: 12px;
     opacity: .75;
@@ -24,51 +30,127 @@
     padding: 6px;
     font: inherit;
   }
+
   button {
-    width: 100%;
-    padding: 9px;
     font: inherit;
-    font-weight: 600;
     border: 0;
     border-radius: 6px;
-    background: #c00;
-    color: #fff;
     cursor: pointer;
   }
-  button:disabled { background: #999; cursor: default; }
-  #barra {
-    height: 6px;
-    border-radius: 3px;
-    background: color-mix(in srgb, currentColor 15%, transparent);
-    margin-top: 10px;
-    overflow: hidden;
-    display: none;
+  #baixar {
+    width: 100%;
+    padding: 9px;
+    font-weight: 600;
+    background: var(--vermelho);
+    color: #fff;
   }
-  #barra > div { height: 100%; width: 0; background: #c00; transition: width .2s; }
+  #baixar:disabled { background: #999; cursor: default; }
+
   #status {
     margin-top: 8px;
     font-size: 12px;
     min-height: 1.4em;
     white-space: pre-wrap;
-    max-height: 190px;
+    max-height: 170px;
     overflow-y: auto;
     overflow-wrap: anywhere;
   }
   /* Erros podem trazer a lista de formatos do yt-dlp: monoespacado, e
      selecionavel para dar para copiar e colar. */
   .erro {
-    color: #c00;
+    color: var(--vermelho);
     font: 11px/1.4 ui-monospace, Consolas, monospace;
     user-select: text;
   }
   .aguardando { opacity: .75; }
+
+  /* ------------------------------------------------ listas de downloads */
+
+  section { margin-top: 14px; border-top: 1px solid var(--linha); padding-top: 10px; }
+  section[hidden] { display: none; }
+
+  h2 {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .55;
+    margin: 0 0 8px;
+  }
+
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+
+  .linha {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 5px 8px;
+    align-items: center;
+  }
+  .nome {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .medida {
+    font-size: 11px;
+    opacity: .6;
+    font-variant-numeric: tabular-nums;
+    justify-self: end;
+  }
+
+  .barra {
+    grid-column: 1 / -1;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--fraco);
+    overflow: hidden;
+  }
+  .barra > div {
+    height: 100%;
+    width: 0;
+    background: var(--vermelho);
+    transition: width .25s;
+  }
+
+  .acoes { grid-column: 1 / -1; display: flex; gap: 6px; }
+  .acoes button {
+    flex: 1;
+    padding: 5px;
+    font-size: 11px;
+    background: var(--fraco);
+    color: inherit;
+  }
+  .acoes .continuar { font-weight: 600; }
+  .acoes .descartar.confirmando { background: var(--vermelho); color: #fff; }
+
+  .cancelar {
+    grid-row: 1;
+    grid-column: 2;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    line-height: 1;
+    font-size: 14px;
+    background: var(--fraco);
+    color: inherit;
+  }
 </style>
 
 <h1>YouTube Downloader Helper</h1>
 <div id="titulo"></div>
 <select id="seletor"></select>
 <button id="baixar" disabled>Procurando vídeo...</button>
-<div id="barra"><div></div></div>
 <div id="status"></div>
+
+<section id="sec-andamento" hidden>
+  <h2>Em andamento</h2>
+  <ul id="lista-andamento"></ul>
+</section>
+
+<section id="sec-interrompidos" hidden>
+  <h2>Interrompidos</h2>
+  <ul id="lista-interrompidos"></ul>
+</section>
 
 <script src="popup.js"></script>

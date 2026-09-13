@@ -4,32 +4,52 @@ const SERVIDOR = "http://127.0.0.1:8756";
 // pagina web qualquer que tente falar com o 127.0.0.1 - veja _cliente_ok()
 // em server.py.
 const CABECALHO = { "X-YTDL-Client": "extension" };
+const JSON_CABECALHO = { "Content-Type": "application/json", ...CABECALHO };
 
 // Status em que um download ainda esta vivo, espelhando o server.py.
 const ATIVOS = ["starting", "downloading", "merging"];
 
+// Por quanto tempo o desfecho de um download continua sendo noticia na tela.
+const NOTICIA_S = 60;
+
+const INTERVALO_MS = 600;
+
 // Aba que ja e uma pagina de video do YouTube.
-const YT_PAGINA = /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?|shorts\/|live\/)|youtu\.be\/)/i;
+const YT_PAGINA =
+  /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?|shorts\/|live\/)|youtu\.be\/)/i;
 
 const botao = document.getElementById("baixar");
 const status = document.getElementById("status");
 const titulo = document.getElementById("titulo");
 const seletor = document.getElementById("seletor");
-const barra = document.getElementById("barra");
-const preenchimento = barra.firstElementChild;
+const secAndamento = document.getElementById("sec-andamento");
+const listaAndamento = document.getElementById("lista-andamento");
+const secInterrompidos = document.getElementById("sec-interrompidos");
+const listaInterrompidos = document.getElementById("lista-interrompidos");
 
 let videos = [];
 let servidorOk = false;
-let baixando = false;
+
+// Mensagem de base da tela, para o desfecho de um download nao apagar a dica
+// de "nao achei video nesta pagina" ao expirar.
+let dica = "";
 
 // Onde os arquivos vao parar. So o servidor sabe: no modo nativo e a pasta
-// local, no Docker e o caminho do host que esta montado no container. Ter
-// isso escrito aqui a mao era mentira assim que a configuracao mudava.
+// local, no Docker e o caminho do host montado no container.
 let pastaDestino = "";
 
 function mostrar(texto, classe = "") {
   status.textContent = texto;
   status.className = classe;
+}
+
+function tamanho(bytes) {
+  const mb = bytes / 1024 / 1024;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+function urlDoVideo(id) {
+  return `https://www.youtube.com/watch?v=${id}`;
 }
 
 // ---------------------------------------------------------------- deteccao
@@ -78,105 +98,7 @@ function videoEscolhido() {
   return videos.length > 1 ? videos[seletor.selectedIndex] : videos[0];
 }
 
-// ------------------------------------------------------------------- estado
-
-function atualizarBotao() {
-  if (baixando) return;
-
-  if (!videos.length) {
-    botao.disabled = true;
-    botao.textContent = "Nenhum vídeo do YouTube nesta página";
-    return;
-  }
-  if (!servidorOk) {
-    botao.disabled = true;
-    botao.textContent = "Aguardando o servidor local...";
-    return;
-  }
-  botao.disabled = false;
-  botao.textContent = videos.length > 1 ? "Baixar selecionado" : "Baixar vídeo";
-}
-
-// A popup nao consegue se recarregar sozinha, entao em vez de pedir para o
-// usuario fechar e abrir de novo, ela fica checando ate o servidor subir.
-async function vigiarServidor() {
-  let avisou = false;
-
-  while (true) {
-    try {
-      const r = await fetch(`${SERVIDOR}/health`, { headers: CABECALHO });
-      servidorOk = r.ok;
-      if (r.ok) pastaDestino = (await r.json()).pasta ?? "";
-    } catch {
-      servidorOk = false;
-    }
-
-    if (servidorOk) {
-      if (avisou) mostrar("Servidor conectado.", "aguardando");
-      atualizarBotao();
-      return;
-    }
-
-    if (!avisou) {
-      mostrar("Servidor desligado. Suba com `docker compose up -d` — eu conecto sozinho.", "erro");
-      avisou = true;
-    }
-    atualizarBotao();
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-}
-
-// Um download que comecou antes desta popup existir continua rodando no
-// servidor - ele nunca dependeu da popup. Sem reencontra-lo aqui, a janelinha
-// abre zerada, o proximo clique sobe um segundo yt-dlp em cima do primeiro, e
-// os dois travam brigando pelos mesmos arquivos .part.
-async function retomarEmAndamento() {
-  let jobs = [];
-  try {
-    const r = await fetch(`${SERVIDOR}/jobs`, { headers: CABECALHO });
-    jobs = (await r.json()).jobs ?? [];
-  } catch {
-    return;
-  }
-
-  const emAndamento = jobs.filter((j) => ATIVOS.includes(j.status)).pop();
-  if (!emAndamento) return;
-
-  baixando = true;
-  botao.disabled = true;
-  botao.textContent = "Baixando...";
-  if (emAndamento.title) titulo.textContent = emAndamento.title;
-  barra.style.display = "block";
-  acompanhar(emAndamento.id);
-}
-
-async function iniciar() {
-  const [aba] = await chrome.tabs.query({ active: true, currentWindow: true });
-  videos = aba ? await detectar(aba) : [];
-
-  if (!videos.length) {
-    titulo.textContent = "";
-    mostrar("Abra um vídeo do YouTube ou uma página que tenha um embutido.");
-  } else if (videos.length > 1) {
-    seletor.innerHTML = "";
-    videos.forEach((v, i) => {
-      const opt = document.createElement("option");
-      opt.textContent = v.titulo || `Vídeo ${i + 1} (${v.id})`;
-      seletor.append(opt);
-    });
-    seletor.style.display = "block";
-    titulo.textContent = `${videos.length} vídeos nesta página:`;
-  } else {
-    titulo.textContent = videos[0].titulo || videos[0].id;
-  }
-
-  atualizarBotao();
-  await vigiarServidor();
-  // Vale mesmo sem video nesta aba: o download pode ter saido de outra.
-  await retomarEmAndamento();
-}
-
-// ----------------------------------------------------------------- download
+// ----------------------------------------------------------------- servidor
 
 // O YouTube exige cookies para liberar o download. Lemos pela API do Chrome
 // porque o yt-dlp nao consegue mais decifrar o banco de cookies do Chrome
@@ -193,71 +115,280 @@ async function coletarCookies() {
   }));
 }
 
-async function acompanhar(id) {
-  const resp = await fetch(`${SERVIDOR}/status?id=${id}`, { headers: CABECALHO });
-  const job = await resp.json();
+async function baixar(id) {
+  const r = await fetch(`${SERVIDOR}/download`, {
+    method: "POST",
+    headers: JSON_CABECALHO,
+    body: JSON.stringify({ url: urlDoVideo(id), cookies: await coletarCookies() }),
+  });
+  const dados = await r.json();
+  if (!r.ok) throw new Error(dados.error ?? "falha na requisição");
 
-  if (job.title) titulo.textContent = job.title;
+  // Quem mantem o badge do icone vivo com a popup fechada.
+  chrome.runtime.sendMessage({ tipo: "acompanhar" }).catch(() => {});
+  return dados;
+}
 
-  if (job.status === "downloading") {
-    barra.style.display = "block";
-    preenchimento.style.width = `${job.percent ?? 0}%`;
-    mostrar(job.percent != null ? `Baixando... ${job.percent}%` : "Baixando...");
-  } else if (job.status === "merging") {
-    preenchimento.style.width = "100%";
-    mostrar("Juntando vídeo e áudio...");
-  } else if (job.status === "done") {
-    preenchimento.style.width = "100%";
-    mostrar(pastaDestino ? `Pronto! Salvo em ${pastaDestino}` : "Pronto!");
-    baixando = false;
-    botao.disabled = false;
-    botao.textContent = "Baixar de novo";
+// --------------------------------------------------------------- renderizacao
+
+// Atualiza uma lista no lugar em vez de recria-la a cada volta: recriar
+// reiniciaria a transicao da barra de progresso a cada 600 ms.
+function sincronizar(lista, itens, criar, atualizar) {
+  const existentes = new Map(
+    [...lista.children].map((el) => [el.dataset.id, el]),
+  );
+
+  for (const item of itens) {
+    let linha = existentes.get(item.id);
+    if (linha) {
+      existentes.delete(item.id);
+    } else {
+      linha = criar(item);
+      linha.dataset.id = item.id;
+      lista.append(linha);
+    }
+    atualizar(linha, item);
+  }
+
+  for (const orfa of existentes.values()) orfa.remove();
+}
+
+function criarLinhaAndamento(job) {
+  const linha = document.createElement("li");
+  linha.className = "linha";
+  linha.innerHTML = `
+    <span class="nome"></span>
+    <button class="cancelar" title="Cancelar este download">&times;</button>
+    <span class="medida"></span>
+    <div class="barra"><div></div></div>`;
+
+  linha.querySelector(".cancelar").addEventListener("click", async () => {
+    await fetch(`${SERVIDOR}/cancelar`, {
+      method: "POST",
+      headers: JSON_CABECALHO,
+      body: JSON.stringify({ id: job.id }),
+    }).catch(() => {});
+  });
+
+  return linha;
+}
+
+function atualizarLinhaAndamento(linha, job) {
+  linha.querySelector(".nome").textContent = job.title || "Obtendo informações...";
+  linha.querySelector(".medida").textContent =
+    job.status === "merging"
+      ? "juntando..."
+      : job.percent != null
+        ? `${job.percent}%`
+        : "iniciando...";
+  linha.querySelector(".barra > div").style.width = `${job.percent ?? 0}%`;
+}
+
+function criarLinhaInterrompida(item) {
+  const linha = document.createElement("li");
+  linha.className = "linha";
+  linha.innerHTML = `
+    <span class="nome"></span>
+    <span class="medida"></span>
+    <div class="acoes">
+      <button class="continuar">Continuar</button>
+      <button class="descartar">Descartar</button>
+    </div>`;
+
+  linha.querySelector(".continuar").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try {
+      await baixar(item.id);
+    } catch (erro) {
+      mostrar(erro.message, "erro");
+      e.target.disabled = false;
+    }
+  });
+
+  // Apagar centenas de MB merece dois cliques. Um confirm() do navegador
+  // seria mais brusco do que o gesto pede, e some junto com a popup.
+  const descartar = linha.querySelector(".descartar");
+  descartar.addEventListener("click", async () => {
+    if (!descartar.classList.contains("confirmando")) {
+      descartar.classList.add("confirmando");
+      descartar.textContent = "Apagar mesmo?";
+      setTimeout(() => {
+        descartar.classList.remove("confirmando");
+        descartar.textContent = "Descartar";
+      }, 4000);
+      return;
+    }
+    descartar.disabled = true;
+    await fetch(`${SERVIDOR}/descartar`, {
+      method: "POST",
+      headers: JSON_CABECALHO,
+      body: JSON.stringify({ id: item.id }),
+    }).catch(() => {});
+  });
+
+  return linha;
+}
+
+function atualizarLinhaInterrompida(linha, item) {
+  linha.querySelector(".nome").textContent = item.titulo;
+  linha.querySelector(".medida").textContent = `${tamanho(item.bytes)} baixados`;
+}
+
+// ------------------------------------------------------------------- estado
+
+let ativosAgora = [];
+
+function atualizarBotao(ativos) {
+  ativosAgora = ativos;
+
+  if (!videos.length) {
+    botao.disabled = true;
+    botao.textContent = "Nenhum vídeo do YouTube nesta página";
     return;
-  } else if (job.status === "error") {
-    barra.style.display = "none";
-    mostrar(job.error, "erro");
-    baixando = false;
-    botao.disabled = false;
-    botao.textContent = "Tentar de novo";
+  }
+  if (!servidorOk) {
+    botao.disabled = true;
+    botao.textContent = "Aguardando o servidor local...";
     return;
   }
 
-  setTimeout(() => acompanhar(id), 500);
+  const escolhido = videoEscolhido();
+  const jaBaixando = ativos.some((j) => (j.url || "").includes(escolhido?.id));
+  if (jaBaixando) {
+    botao.disabled = true;
+    botao.textContent = "Este vídeo já está baixando";
+    return;
+  }
+
+  botao.disabled = false;
+  botao.textContent = videos.length > 1 ? "Baixar selecionado" : "Baixar vídeo";
+}
+
+function noticiar(jobs) {
+  const agora = Date.now() / 1000;
+  const recentes = jobs.filter(
+    (j) => !ATIVOS.includes(j.status) && agora - (j.finalizado ?? 0) < NOTICIA_S,
+  );
+
+  const falhou = recentes.find((j) => j.status === "error");
+  if (falhou) {
+    mostrar(falhou.error, "erro");
+    return;
+  }
+  const pronto = recentes.find((j) => j.status === "done");
+  if (pronto) {
+    mostrar(`Pronto! Salvo em ${pastaDestino}`);
+    return;
+  }
+  const cancelado = recentes.find((j) => j.status === "canceled");
+  if (cancelado) {
+    mostrar("Download cancelado. O que já baixou ficou em Interrompidos.");
+    return;
+  }
+  mostrar(dica);
+}
+
+// A popup nao consegue se recarregar sozinha, entao em vez de pedir para o
+// usuario fechar e abrir de novo, ela fica batendo ate o servidor subir - e,
+// depois, ate ela ser fechada, porque e dai que sai a tela toda.
+async function acompanhar() {
+  while (true) {
+    let dados = null;
+    try {
+      const r = await fetch(`${SERVIDOR}/jobs`, { headers: CABECALHO });
+      if (r.ok) dados = await r.json();
+    } catch {
+      dados = null;
+    }
+
+    if (!dados) {
+      if (servidorOk || status.textContent === "") {
+        mostrar(
+          "Servidor desligado. Suba com `docker compose up -d` — eu conecto sozinho.",
+          "erro",
+        );
+      }
+      servidorOk = false;
+      atualizarBotao([]);
+      sincronizar(listaAndamento, [], criarLinhaAndamento, atualizarLinhaAndamento);
+      secAndamento.hidden = true;
+      secInterrompidos.hidden = true;
+    } else {
+      servidorOk = true;
+      pastaDestino = dados.pasta ?? "";
+
+      const jobs = dados.jobs ?? [];
+      const ativos = jobs.filter((j) => ATIVOS.includes(j.status));
+      const interrompidos = dados.interrompidos ?? [];
+
+      sincronizar(
+        listaAndamento,
+        ativos,
+        criarLinhaAndamento,
+        atualizarLinhaAndamento,
+      );
+      sincronizar(
+        listaInterrompidos,
+        interrompidos,
+        criarLinhaInterrompida,
+        atualizarLinhaInterrompida,
+      );
+      secAndamento.hidden = !ativos.length;
+      secInterrompidos.hidden = !interrompidos.length;
+
+      noticiar(jobs);
+      atualizarBotao(ativos);
+    }
+
+    await new Promise((r) => setTimeout(r, INTERVALO_MS));
+  }
 }
 
 botao.addEventListener("click", async () => {
   const video = videoEscolhido();
   if (!video) return;
 
-  baixando = true;
   botao.disabled = true;
   botao.textContent = "Baixando...";
-  preenchimento.style.width = "0";
   mostrar("Falando com o servidor local...");
 
   try {
-    const r = await fetch(`${SERVIDOR}/download`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...CABECALHO },
-      body: JSON.stringify({
-        url: `https://www.youtube.com/watch?v=${video.id}`,
-        cookies: await coletarCookies(),
-      }),
-    });
-    const dados = await r.json();
-    if (!r.ok) throw new Error(dados.error ?? "falha na requisição");
-
-    // Quem mantem o badge do icone vivo com a popup fechada.
-    chrome.runtime.sendMessage({ tipo: "acompanhar" }).catch(() => {});
-
+    const dados = await baixar(video.id);
     if (dados.ja_em_andamento) mostrar("Este vídeo já estava baixando.");
-    acompanhar(dados.id);
   } catch (e) {
     mostrar(e.message, "erro");
-    baixando = false;
     botao.disabled = false;
     botao.textContent = "Tentar de novo";
   }
 });
+
+async function iniciar() {
+  const [aba] = await chrome.tabs.query({ active: true, currentWindow: true });
+  videos = aba ? await detectar(aba) : [];
+
+  if (!videos.length) {
+    titulo.textContent = "";
+    dica = "Abra um vídeo do YouTube ou uma página que tenha um embutido.";
+    mostrar(dica);
+  } else if (videos.length > 1) {
+    seletor.innerHTML = "";
+    videos.forEach((v, i) => {
+      const opt = document.createElement("option");
+      opt.textContent = v.titulo || `Vídeo ${i + 1} (${v.id})`;
+      seletor.append(opt);
+    });
+    seletor.style.display = "block";
+    seletor.addEventListener("change", () => atualizarBotao(ativosAgora));
+    titulo.textContent = `${videos.length} vídeos nesta página:`;
+  } else {
+    titulo.textContent = videos[0].titulo || videos[0].id;
+  }
+
+  atualizarBotao([]);
+
+  // Vale mesmo sem video nesta aba: pode haver download de outra rolando, ou
+  // algo interrompido esperando para ser retomado.
+  acompanhar();
+}
 
 iniciar();
