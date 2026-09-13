@@ -23,6 +23,7 @@ const status = document.getElementById("status");
 const titulo = document.getElementById("titulo");
 const seletor = document.getElementById("seletor");
 const campoNome = document.getElementById("nome");
+const avisoBaixado = document.getElementById("ja-baixado");
 const secAndamento = document.getElementById("sec-andamento");
 const listaAndamento = document.getElementById("lista-andamento");
 const secInterrompidos = document.getElementById("sec-interrompidos");
@@ -46,6 +47,22 @@ function mostrar(texto, classe = "") {
   status.hidden = !texto;
 }
 
+function velocidade(bytesPorSegundo) {
+  if (!bytesPorSegundo) return "";
+  const mb = bytesPorSegundo / 1024 / 1024;
+  return mb >= 1
+    ? `${mb.toFixed(1).replace(".", ",")} MB/s`
+    : `${Math.round(bytesPorSegundo / 1024)} kB/s`;
+}
+
+function restante(segundos) {
+  if (segundos == null) return "";
+  if (segundos < 60) return `${Math.round(segundos)} s`;
+  if (segundos < 3600) return `${Math.round(segundos / 60)} min`;
+  const horas = Math.floor(segundos / 3600);
+  return `${horas} h ${Math.round((segundos % 3600) / 60)} min`;
+}
+
 function tamanho(bytes) {
   const mb = bytes / 1024 / 1024;
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
@@ -66,8 +83,9 @@ function etapaDoJob(job) {
   // O YouTube entrega as faixas separadas, entao o yt-dlp baixa duas vezes.
   // Dizer qual esta vindo e o que impede a segunda parecer um recomeco.
   const rotulo = FAIXAS[job.faixa] ?? "Baixando";
-  if (job.percent == null) return `${rotulo}...`;
-  return `${rotulo} · ${Math.round(job.percent)}%`;
+  const partes = [job.percent == null ? null : `${Math.round(job.percent)}%`];
+  partes.push(velocidade(job.velocidade), restante(job.eta));
+  return [rotulo, ...partes.filter(Boolean)].join(" · ");
 }
 
 function urlDoVideo(id) {
@@ -120,13 +138,8 @@ function videoEscolhido() {
   return videos.length > 1 ? videos[seletor.selectedIndex] : videos[0];
 }
 
-// Vazio, o campo nao muda nada: vale o titulo do YouTube. O placeholder
-// mostra qual e esse titulo, para dar para decidir se vale renomear - os
-// titulos de aula costumam vir com carimbo de data na frente.
-function atualizarPlaceholder() {
-  const escolhido = videoEscolhido();
-  campoNome.placeholder = escolhido?.titulo || "Nome do arquivo (opcional)";
-}
+// Vazio, o campo nao muda nada: vale o titulo do YouTube, que ja aparece
+// logo acima. O placeholder instrui em vez de repetir esse titulo.
 
 // ----------------------------------------------------------------- servidor
 
@@ -270,10 +283,15 @@ function atualizarLinhaInterrompida(linha, item) {
 
 let ativosAgora = [];
 
+// Ids que ja tem arquivo pronto na pasta. Num curso com dezenas de aulas
+// parecidas, e o que evita rebaixar 800 MB por engano.
+let baixados = [];
+
 function atualizarBotao(ativos) {
   ativosAgora = ativos;
   botao.hidden = false;
   titulo.hidden = false;
+  avisoBaixado.hidden = true;
   campoNome.style.display = videos.length ? "block" : "none";
 
   if (!videos.length) {
@@ -302,8 +320,15 @@ function atualizarBotao(ativos) {
     return;
   }
 
+  const jaNaPasta = baixados.includes(escolhido?.id);
+  avisoBaixado.hidden = !jaNaPasta;
+
   botao.disabled = false;
-  botao.textContent = videos.length > 1 ? "Baixar selecionado" : "Baixar vídeo";
+  botao.textContent = jaNaPasta
+    ? "Baixar de novo"
+    : videos.length > 1
+      ? "Baixar selecionado"
+      : "Baixar vídeo";
 }
 
 function noticiar(jobs) {
@@ -358,6 +383,7 @@ async function acompanhar() {
     } else {
       servidorOk = true;
       pastaDestino = dados.pasta ?? "";
+      baixados = dados.baixados ?? [];
 
       const jobs = dados.jobs ?? [];
       const ativos = jobs.filter((j) => ATIVOS.includes(j.status));
@@ -420,16 +446,12 @@ async function iniciar() {
       seletor.append(opt);
     });
     seletor.style.display = "block";
-    seletor.addEventListener("change", () => {
-      atualizarPlaceholder();
-      atualizarBotao(ativosAgora);
-    });
+    seletor.addEventListener("change", () => atualizarBotao(ativosAgora));
     titulo.textContent = `${videos.length} vídeos nesta página:`;
   } else {
     titulo.textContent = videos[0].titulo || videos[0].id;
   }
 
-  atualizarPlaceholder();
   atualizarBotao([]);
 
   // Vale mesmo sem video nesta aba: pode haver download de outra rolando, ou

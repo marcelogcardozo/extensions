@@ -43,6 +43,16 @@
   }
   #nome::placeholder { opacity: .5; }
 
+  #ja-baixado {
+    margin-bottom: 10px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--fraco);
+    border-left: 3px solid var(--vermelho);
+  }
+  #ja-baixado[hidden] { display: none; }
+
   button {
     font: inherit;
     border: 0;
@@ -161,7 +171,9 @@
 <h1>YouTube Downloader Helper</h1>
 <div id="titulo"></div>
 <select id="seletor"></select>
-<input id="nome" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+<div id="ja-baixado" hidden>Este vídeo já está na sua pasta.</div>
+<input id="nome" type="text" maxlength="120" autocomplete="off"
+       spellcheck="false" placeholder="Renomear o arquivo (opcional)">
 <button id="baixar" disabled>Procurando vídeo...</button>
 <div id="status"></div>
 

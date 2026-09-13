@@ -642,3 +642,21 @@ def test_nome_escolhido_chega_limpo_na_fila(base_url):
     _, _, _, nome = server.fila.get_nowait()
     server.fila.task_done()
     assert nome == "Aula 04 VPC"
+
+
+# ------------------------------------------------------- ja esta na pasta
+
+
+def test_baixados_lista_so_o_que_esta_pronto(pastas):
+    saida, trabalho = pastas
+    criar(saida, "Aula 1 [aqz-KE-bpKQ].mp4")
+    criar(saida, "Aula 2 [fj8XgF2__0M].f137.mp4")  # trilha solta, nao esta pronto
+    criar(trabalho, "Aula 3 [M5ZHGyJrVSY].f140.m4a.part")
+    criar(saida, "sem id nenhum.mp4")
+
+    assert server.listar_baixados() == ["aqz-KE-bpKQ"]
+
+
+def test_baixados_ignora_pasta_inexistente(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path / "nao-existe")
+    assert server.listar_baixados() == []

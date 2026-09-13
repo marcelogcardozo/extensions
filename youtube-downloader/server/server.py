@@ -194,6 +194,26 @@ def listar_interrompidos():
     return sorted(saida, key=lambda i: i["titulo"].lower())
 
 
+def listar_baixados():
+    """Ids de video que ja tem arquivo pronto na pasta de saida.
+
+    E o mesmo criterio da varredura de parciais, ao contrario: o que NAO casa
+    com padrao de parcial e resultado. Serve para a popup avisar antes de
+    voce baixar 800 MB de uma aula que ja esta ali.
+    """
+    if not OUTPUT_DIR.is_dir():
+        return []
+
+    achados = set()
+    for arquivo in OUTPUT_DIR.iterdir():
+        if not arquivo.is_file() or PARCIAL_NA_SAIDA.search(arquivo.name):
+            continue
+        achado = ID_NO_NOME.search(arquivo.name)
+        if achado:
+            achados.add(achado.group(1))
+    return sorted(achados)
+
+
 def descartar(video_id):
     """Apaga os arquivos de trabalho de um video. Nunca toca num MP4 pronto."""
     apagados = 0
@@ -428,6 +448,9 @@ def download(job_id, url, cookies, nome=None):
                 status="downloading",
                 percent=percentual(plano, d.get("downloaded_bytes", 0), total_faixa),
                 faixa=faixa,
+                # O yt-dlp ja calcula os dois; era so nao jogar fora.
+                velocidade=d.get("speed"),
+                eta=d.get("eta"),
             )
 
         elif d["status"] == "finished":
@@ -438,7 +461,10 @@ def download(job_id, url, cookies, nome=None):
             # So e hora de juntar quando TODAS as faixas chegaram. Antes disso,
             # marcar "merging" fazia a tela mostrar baixar -> juntar -> baixar.
             if plano["concluidos"] >= plano["faixas"]:
-                set_job(job_id, status="merging", percent=100)
+                # Zera os dois: numero velho parado na tela mente.
+                set_job(
+                    job_id, status="merging", percent=100, velocidade=None, eta=None
+                )
 
     arquivo_cookies = escrever_cookies(cookies) if cookies else None
     registrador = Registrador()
@@ -584,6 +610,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "jobs": listar_jobs(),
                     "interrompidos": listar_interrompidos(),
+                    "baixados": listar_baixados(),
                     "pasta": DISPLAY_DIR,
                 },
                 origin,
