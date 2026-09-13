@@ -41,11 +41,23 @@ let pastaDestino = "";
 function mostrar(texto, classe = "") {
   status.textContent = texto;
   status.className = classe;
+  // Vazio, ele reservava altura e abria um vao morto acima das listas.
+  status.hidden = !texto;
 }
 
 function tamanho(bytes) {
   const mb = bytes / 1024 / 1024;
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+// O que o download esta fazendo agora, em palavras. Antes eram fragmentos
+// soltos ("iniciando...", "juntando...") jogados na direita da linha, onde
+// nao tinham largura garantida e eram os primeiros a ser cortados.
+function etapaDoJob(job) {
+  if (job.status === "starting") return "Consultando o YouTube...";
+  if (job.status === "merging") return "Juntando vídeo e áudio...";
+  if (job.percent == null) return "Baixando...";
+  return `Baixando · ${Math.round(job.percent)}%`;
 }
 
 function urlDoVideo(id) {
@@ -159,8 +171,8 @@ function criarLinhaAndamento(job) {
   linha.innerHTML = `
     <span class="nome"></span>
     <button class="cancelar" title="Cancelar este download">&times;</button>
-    <span class="medida"></span>
-    <div class="barra"><div></div></div>`;
+    <div class="barra"><div></div></div>
+    <span class="etapa"></span>`;
 
   linha.querySelector(".cancelar").addEventListener("click", async () => {
     await fetch(`${SERVIDOR}/cancelar`, {
@@ -174,22 +186,17 @@ function criarLinhaAndamento(job) {
 }
 
 function atualizarLinhaAndamento(linha, job) {
-  linha.querySelector(".nome").textContent = job.title || "Obtendo informações...";
-  linha.querySelector(".medida").textContent =
-    job.status === "merging"
-      ? "juntando..."
-      : job.percent != null
-        ? `${job.percent}%`
-        : "iniciando...";
+  linha.querySelector(".nome").textContent = job.title || "Vídeo do YouTube";
+  linha.querySelector(".etapa").textContent = etapaDoJob(job);
   linha.querySelector(".barra > div").style.width = `${job.percent ?? 0}%`;
 }
 
 function criarLinhaInterrompida(item) {
   const linha = document.createElement("li");
-  linha.className = "linha";
+  linha.className = "linha interrompida";
   linha.innerHTML = `
     <span class="nome"></span>
-    <span class="medida"></span>
+    <span class="etapa"></span>
     <div class="acoes">
       <button class="continuar">Continuar</button>
       <button class="descartar">Descartar</button>
@@ -231,7 +238,8 @@ function criarLinhaInterrompida(item) {
 
 function atualizarLinhaInterrompida(linha, item) {
   linha.querySelector(".nome").textContent = item.titulo;
-  linha.querySelector(".medida").textContent = `${tamanho(item.bytes)} baixados`;
+  linha.querySelector(".etapa").textContent =
+    `${tamanho(item.bytes)} já baixados · parado`;
 }
 
 // ------------------------------------------------------------------- estado
@@ -240,6 +248,8 @@ let ativosAgora = [];
 
 function atualizarBotao(ativos) {
   ativosAgora = ativos;
+  botao.hidden = false;
+  titulo.hidden = false;
 
   if (!videos.length) {
     botao.disabled = true;
@@ -252,11 +262,17 @@ function atualizarBotao(ativos) {
     return;
   }
 
+  // Quando o video desta aba ja esta baixando, o topo nao tem nada a oferecer:
+  // a lista logo abaixo mostra o mesmo video com progresso e botao de
+  // cancelar. Manter um botao morto aqui so dizia a mesma coisa duas vezes.
   const escolhido = videoEscolhido();
-  const jaBaixando = ativos.some((j) => (j.url || "").includes(escolhido?.id));
+  const jaBaixando =
+    escolhido && ativos.some((j) => (j.url || "").includes(escolhido.id));
   if (jaBaixando) {
-    botao.disabled = true;
-    botao.textContent = "Este vídeo já está baixando";
+    botao.hidden = true;
+    // Com varios videos na pagina o titulo nao repete nada - ele diz quantos
+    // sao, e o seletor continua servindo para escolher outro.
+    titulo.hidden = videos.length === 1;
     return;
   }
 
