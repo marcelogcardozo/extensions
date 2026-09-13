@@ -1,0 +1,34 @@
+# Configuração do ruff para o repositório inteiro. Cada projeto continua
+# autocontido no que importa para rodá-lo; lint é uma convenção de quem
+# escreve, não de quem usa, então vale uma regra só para todos.
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle (warnings)
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplificações
+    "C4",   # comprehensions
+    "N",    # nomes (pep8-naming)
+    "ARG",  # argumentos não usados
+    "BLE",  # except Exception sem critério
+    "RUF",  # regras do próprio ruff
+]
+
+# PTH (forçar pathlib no lugar de os.path/os.remove) fica de fora de
+# propósito: `os.remove` é claro onde está e a troca renderia só churn.
+
+[tool.ruff.lint.per-file-ignores]
+# O import do módulo sob teste vem depois de mexer no sys.path, e é essa a
+# intenção.
+"**/tests/*" = ["E402"]
+
+[tool.ruff.format]
+docstring-code-format = true

@@ -193,8 +193,15 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Não tocam a rede: sobem o servidor de verdade numa porta efêmera e falam com
-ele por HTTP. O foco é o que já quebrou ou o que só foi validado à mão — as
+O lint é do repositório inteiro, configurado no `pyproject.toml` da raiz:
+
+```bash
+ruff check .
+ruff format .
+```
+
+Os testes não tocam a rede: sobem o servidor de verdade numa porta efêmera e
+falam com ele por HTTP. O foco é o que já quebrou ou o que só foi validado à mão — as
 regras de aceitação de cliente, o formato do arquivo de cookies, a validação de
 URL e a cadeia de formatos.
 
