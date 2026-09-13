@@ -93,7 +93,13 @@ mostrar a barra — mesmo que você tenha trocado de aba.
 Clicar em baixar de novo no mesmo vídeo não duplica nada: o servidor devolve o
 download que já está rodando.
 
-Antes de baixar, dá para **renomear o arquivo** no campo logo acima do botão.
+Antes de baixar, dá para escolher a **qualidade** — Melhor, 1080p, 720p ou
+Só áudio. Aula é slide e cabeça falante: 720p entrega a mesma informação numa
+fração do tamanho, e para revisar no trânsito só o áudio basta. No mesmo vídeo
+de teste isso foi 723 MB → 82 MB → 10 MB. A escolha fica gravada entre uma
+abertura e outra da popup.
+
+Antes de baixar, dá para **renomear o arquivo** no campo ao lado.
 Vazio, nada muda: vale o título que a fonte publicou. Útil porque aula gravada
 costuma vir como `2026 07 26 08 05 04 Nome do Curso` — carimbo de data na
 frente e nada dizendo qual aula é.
@@ -142,11 +148,9 @@ dois modos de execução.
 [extension/manifest.json](extension/manifest.json) — o Chrome só deixa a
 extensão falar com hosts declarados no manifest.
 
-Qualidade e formato ficam na constante `FORMATO`, em
-[server/server.py](server/server.py). Exemplos:
-
-- Limitar a 1080p: `bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best`
-- Só áudio: `bestaudio/best` (e troque `merge_output_format` por `mp3`)
+As cadeias de formato de cada qualidade ficam em `FORMATOS`, em
+[server/server.py](server/server.py) — é lá que se ajusta o que cada opção da
+popup significa.
 
 ## Decisões que não são óbvias
 
@@ -177,6 +181,17 @@ liga o `node` explicitamente:
 Sem isso a extração devolve só as imagens da miniatura e o download morre com
 `Requested format is not available` — uma mensagem que não dá nenhuma pista da
 causa real.
+
+**Por que o limite de qualidade é estrito.** Toda a cadeia de 720p carrega o
+`height<=720`, sem nenhum degrau sem restrição no fim. Pedir 720p e receber um
+arquivo 4K seria pior do que falhar — e falhar aqui é barato, porque o erro já
+vem com a lista de formatos que o YouTube ofereceu. Na prática o YouTube tem
+720p para quase tudo.
+
+**Por que só áudio sai em m4a e não em MP3.** M4A é o container nativo do
+YouTube: o arquivo sai na hora, sem recodificar e sem perda. Converter para MP3
+seria recomprimir um áudio já comprimido — mais lento e com menos qualidade que
+o original. Toca em tudo que é relevante hoje.
 
 **Por que a fila é de um por vez.** Não é limitação técnica — é que banda é
 um recurso fixo. Três downloads de 800 MB em paralelo não terminam antes;
