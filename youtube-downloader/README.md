@@ -93,6 +93,18 @@ mostrar a barra — mesmo que você tenha trocado de aba.
 Clicar em baixar de novo no mesmo vídeo não duplica nada: o servidor devolve o
 download que já está rodando.
 
+A popup tem duas listas abaixo do botão:
+
+- **Em andamento** — um item por download, com barra de progresso e um `×`
+  para cancelar.
+- **Interrompidos** — o que parou no meio (cancelado, servidor derrubado, erro
+  de rede), com **Continuar** e **Descartar**. Continuar retoma de onde parou:
+  um download de 500 MB interrompido volta dos 500 MB, não do zero.
+
+A pasta de saída recebe **só o MP4 pronto**. Trilhas separadas e arquivos
+`.part` ficam numa subpasta `.em-andamento`, e somem sozinhos quando o
+download termina.
+
 O arquivo sai em MP4, na melhor qualidade disponível, com o nome
 `Título [id].mp4`.
 
@@ -149,6 +161,17 @@ liga o `node` explicitamente:
 Sem isso a extração devolve só as imagens da miniatura e o download morre com
 `Requested format is not available` — uma mensagem que não dá nenhuma pista da
 causa real.
+
+**Por que os parciais não ficam na pasta de saída.** Ela misturava três
+coisas que ninguém distingue olhando o Explorer: vídeo pronto, trilha
+intermediária (`.f137.mp4`) e download pela metade (`.part`). Era uma bancada
+de trabalho se passando por prateleira — e quando algo dava errado, o
+Explorer virava a única interface disponível para entender o estrago.
+
+Agora o `yt-dlp` trabalha em `.em-andamento/` e só o resultado é publicado na
+pasta de saída. A subpasta fica **dentro** dela de propósito: o passo final é
+um rename, e rename entre volumes diferentes vira cópia — num arquivo de
+800 MB isso se nota.
 
 **Por que existe um service worker.** A popup é efêmera: some assim que você
 clica fora dela, e com ela sumia qualquer sinal de que havia um download
@@ -237,7 +260,8 @@ URL e a cadeia de formatos.
 | `Requested format is not available` | Quase sempre é o desafio JS. No Docker não deveria acontecer; no modo nativo, confira se o `node` está no PATH e se o `yt-dlp-ejs` está instalado. O erro vem com os avisos do `yt-dlp` e a lista de formatos. |
 | `403` no log do servidor | Versões desencontradas: reinicie o servidor e clique em ⟳ na extensão. |
 | `A porta 8756 já está em uso` | Já tem um servidor rodando (talvez um container). `docker compose down` ou feche a janela do `.bat`. |
-| Um `.part` que não cresce mais | Sobra de duas tentativas simultâneas do mesmo vídeo, um bug corrigido na 1.2.0. Apague os arquivos daquele vídeo (`.f*.mp4`, `.f*.m4a`, `.part`) e baixe de novo — o `.part` está corrompido e o `yt-dlp` tentaria continuar de onde parou. |
+| Um download parou no meio | Ele aparece em **Interrompidos** na popup: **Continuar** retoma de onde parou, **Descartar** apaga os parciais. Não precisa mexer em arquivo na mão. |
+| Sobras de antes da 1.3.0 na pasta de saída | Arquivos `.f*.mp4` / `.part` soltos aparecem em **Interrompidos** do mesmo jeito. Se vieram da colisão que a 1.2.0 corrigiu, estão corrompidos: use **Descartar** e baixe de novo, em vez de Continuar. |
 | Erro de extração qualquer | Atualize o `yt-dlp` (abaixo). |
 
 ## Quando parar de funcionar
