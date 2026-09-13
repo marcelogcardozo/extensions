@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Configuracao local de cada projeto
+.env
+
+# Pasta de saida quando o compose roda sem .env
+downloads/
+
+# Sistema
+Thumbs.db
+.DS_Store

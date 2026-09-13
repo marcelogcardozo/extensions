@@ -1,0 +1,5 @@
+# Entrypoints de container sao lidos pelo Linux: CRLF quebra o shebang
+# ("bad interpreter") e o erro nao diz o que aconteceu.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.bat text eol=crlf
