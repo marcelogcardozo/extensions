@@ -1,40 +1,41 @@
 # extensions
 
-Extensões de navegador que eu escrevo para uso próprio. Cada uma é um projeto
-independente numa pasta, com o seu próprio README, os seus testes e a sua forma
-de rodar — você não precisa ler este arquivo para usar nenhuma delas.
+Pequenas extensões de navegador para resolver problemas reais do dia a dia.
+Cada projeto nasce independente, com seu próprio código, instruções, testes e
+forma de execução. A ideia é manter as ferramentas simples de instalar,
+transparentes no que fazem e úteis fora de uma demonstração bonita.
 
-| Projeto | O que faz | Navegadores |
+## Sumário
+
+| Projeto | Descrição | Navegadores |
 |---|---|---|
-| [youtube-downloader](youtube-downloader/) | Baixa o vídeo da aba atual (ou embutido em `<iframe>`) com o `yt-dlp` rodando localmente | Chrome, Edge |
+| [youtube-downloader](youtube-downloader/) | Baixa vídeos da aba atual ou de players do YouTube embutidos, usando `yt-dlp` localmente | Chrome, Edge |
 
-## Como este repositório é organizado
+## Como explorar
 
-```
+Comece pelo README do projeto que você quer usar. Este arquivo é apenas o mapa;
+cada pasta de projeto explica instalação, uso, configuração, limitações e testes
+sem depender de conhecimento do restante do repositório.
+
+```text
 extensions/
-├── README.md                      este índice
-├── .github/workflows/             um workflow por projeto, filtrado por caminho
+├── README.md                  este índice
+├── .github/workflows/         automações de CI por projeto
 └── <projeto>/
-    ├── README.md                  instalação e uso — o projeto se explica sozinho
-    ├── extension/                 o que se carrega no navegador
-    └── server/                    o que rodar fora dele, quando houver
+    ├── README.md              instalação e uso
+    ├── extension/             arquivos carregados no navegador
+    └── server/                serviços locais, quando necessários
 ```
 
-Três decisões que valem explicar, porque não são óbvias:
+Os projetos são versionados separadamente. Por exemplo, uma versão do
+`youtube-downloader` é marcada como `youtube-downloader/v1.1.0`, sem obrigar
+as outras extensões a acompanhar o mesmo ciclo.
 
-**Não existe `shared/`.** Enquanto houver um projeto só, não há o que
-compartilhar — e abstrair cedo demais é o jeito clássico de um monorepo dar
-errado. Quando o segundo projeto chegar, a duplicação real vai mostrar o que
-extrair, e provavelmente não é o que eu adivinharia hoje.
+## Desenvolvimento
 
-**A divisão é por projeto, não por navegador.** Uma pasta `chrome/` e outra
-`firefox/` duplicariam o projeto inteiro por causa de umas poucas linhas de
-manifest. Quando um projeto precisar de mais de um navegador, o padrão é
-`src/` compartilhado + `manifest.<alvo>.json` + um build que monta
-`dist/<alvo>/` — dentro do projeto.
-
-**Tags são por projeto**: `youtube-downloader/v1.1.0`. Uma versão do
-repositório inteiro não significaria nada com cinco projetos dentro.
+O lint de Python é compartilhado e configurado no
+[`pyproject.toml`](pyproject.toml). Os testes e demais comandos ficam junto do
+projeto que os utiliza.
 
 ## Licença
 
