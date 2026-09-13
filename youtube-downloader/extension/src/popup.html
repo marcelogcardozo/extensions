@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>YouTube Downloader Helper</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    width: 320px;
+    margin: 0;
+    padding: 14px;
+    font: 13px/1.45 system-ui, sans-serif;
+  }
+  h1 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  #titulo {
+    font-size: 12px;
+    opacity: .75;
+    margin-bottom: 10px;
+    max-height: 3em;
+    overflow: hidden;
+  }
+  #seletor {
+    display: none;
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 6px;
+    font: inherit;
+  }
+  button {
+    width: 100%;
+    padding: 9px;
+    font: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: 6px;
+    background: #c00;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { background: #999; cursor: default; }
+  #barra {
+    height: 6px;
+    border-radius: 3px;
+    background: color-mix(in srgb, currentColor 15%, transparent);
+    margin-top: 10px;
+    overflow: hidden;
+    display: none;
+  }
+  #barra > div { height: 100%; width: 0; background: #c00; transition: width .2s; }
+  #status {
+    margin-top: 8px;
+    font-size: 12px;
+    min-height: 1.4em;
+    white-space: pre-wrap;
+    max-height: 190px;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+  }
+  /* Erros podem trazer a lista de formatos do yt-dlp: monoespacado, e
+     selecionavel para dar para copiar e colar. */
+  .erro {
+    color: #c00;
+    font: 11px/1.4 ui-monospace, Consolas, monospace;
+    user-select: text;
+  }
+  .aguardando { opacity: .75; }
+</style>
+
+<h1>YouTube Downloader Helper</h1>
+<div id="titulo"></div>
+<select id="seletor"></select>
+<button id="baixar" disabled>Procurando vídeo...</button>
+<div id="barra"><div></div></div>
+<div id="status"></div>
+
+<script src="popup.js"></script>

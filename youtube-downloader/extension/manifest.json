@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Downloader Helper",
+  "version": "1.1.0",
+  "description": "Baixa o video da aba atual do YouTube usando o yt-dlp rodando localmente.",
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8756/*",
+    "https://*.youtube.com/*"
+  ],
+  "action": {
+    "default_title": "Baixar este video",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
