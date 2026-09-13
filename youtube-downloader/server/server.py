@@ -12,6 +12,7 @@ E tambem o que torna o container viavel: o servidor nunca precisa enxergar o
 navegador nem o sistema de arquivos do host.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -20,7 +21,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 
@@ -64,15 +65,19 @@ def escrever_cookies(cookies):
         dominio = c.get("domain", "")
         if not dominio or not c.get("name"):
             continue
-        linhas.append("\t".join([
-            dominio,
-            "TRUE" if dominio.startswith(".") else "FALSE",
-            c.get("path", "/"),
-            "TRUE" if c.get("secure") else "FALSE",
-            str(int(c.get("expires") or 0)),
-            c["name"],
-            c.get("value", ""),
-        ]))
+        linhas.append(
+            "\t".join(
+                [
+                    dominio,
+                    "TRUE" if dominio.startswith(".") else "FALSE",
+                    c.get("path", "/"),
+                    "TRUE" if c.get("secure") else "FALSE",
+                    str(int(c.get("expires") or 0)),
+                    c["name"],
+                    c.get("value", ""),
+                ]
+            )
+        )
 
     fd, caminho = tempfile.mkstemp(prefix="ytdl-cookies-", suffix=".txt")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -88,6 +93,7 @@ def escrever_cookies(cookies):
 # falha justamente nos casos em que a gente contava com ele de rede de
 # seguranca. "bestvideo*" (com asterisco) aceita tambem formatos que ja tenham
 # audio embutido, e por isso e um fallback melhor.
+# fmt: off
 FORMATO = "/".join([
     "bestvideo[ext=mp4]+bestaudio[ext=m4a]",  # o ideal: MP4 + M4A
     "bestvideo*+bestaudio",                   # qualquer container
@@ -95,6 +101,7 @@ FORMATO = "/".join([
     "bestvideo*",                             # so video, se for so o que tem
     "bestaudio",                              # so audio, ultimo recurso
 ])
+# fmt: on
 
 # O YouTube protege as URLs com um desafio em JavaScript (o parametro "n"). O
 # yt-dlp nao resolve isso sozinho: delega a um runtime JS externo, via pacote
@@ -128,8 +135,9 @@ def listar_formatos(url, opts):
     """Formatos que o YouTube realmente ofereceu, para diagnostico."""
     # Precisa herdar js_runtimes, senao a sonda roda sem resolver o desafio
     # e lista "nenhum formato" mesmo quando o download real teria formatos.
-    sonda = {k: v for k, v in opts.items()
-             if k in ("cookiefile", "quiet", "js_runtimes")}
+    sonda = {
+        k: v for k, v in opts.items() if k in ("cookiefile", "quiet", "js_runtimes")
+    }
     sonda["skip_download"] = True
     try:
         with yt_dlp.YoutubeDL(sonda) as ydl:
@@ -194,18 +202,17 @@ def download(job_id, url, cookies):
                 partes.append("\n\nO YouTube nao ofereceu nenhum formato.")
 
         if registrador.mensagens:
-            partes.append("\n\nAvisos do yt-dlp:\n"
-                          + "\n".join(registrador.mensagens[:10]))
+            partes.append(
+                "\n\nAvisos do yt-dlp:\n" + "\n".join(registrador.mensagens[:10])
+            )
 
         set_job(job_id, status="error", error="".join(partes))
 
     finally:
         # Os cookies sao credenciais: nao deixar sobrando no disco.
         if arquivo_cookies:
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(arquivo_cookies)
-            except OSError:
-                pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -233,8 +240,11 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("X-YTDL-Client") == "extension"
 
     def _recusar(self):
-        cabecalhos = {k: v for k, v in self.headers.items()
-                      if k.lower() in ("origin", "referer", "user-agent", "x-ytdl-client")}
+        cabecalhos = {
+            k: v
+            for k, v in self.headers.items()
+            if k.lower() in ("origin", "referer", "user-agent", "x-ytdl-client")
+        }
         print(f"  recusado: {cabecalhos}", flush=True)
         self._send(403, {"error": "requisicao nao veio da extensao"})
 
@@ -330,7 +340,7 @@ if __name__ == "__main__":
         print(f"A porta {PORT} ja esta em uso.")
         print("Provavelmente ja existe uma janela deste servidor aberta.")
         print("Feche a outra janela (ou mude YTDL_PORT).")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     print(f"Baixando para: {OUTPUT_DIR}", flush=True)
     print(f"Ouvindo em http://{HOST}:{PORT} (Ctrl+C para parar)", flush=True)

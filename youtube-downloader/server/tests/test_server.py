@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import server  # noqa: E402
+import server
 
 EXTENSAO = {"X-YTDL-Client": "extension"}
 ORIGEM_EXTENSAO = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
@@ -74,9 +74,7 @@ def test_extensao_com_origin_de_extensao_e_aceita(base_url):
 
 
 def test_pagina_web_e_recusada(base_url):
-    codigo, _ = pedir(
-        f"{base_url}/health", headers={**EXTENSAO, "Origin": ORIGEM_SITE}
-    )
+    codigo, _ = pedir(f"{base_url}/health", headers={**EXTENSAO, "Origin": ORIGEM_SITE})
     assert codigo == 403
 
 
@@ -132,23 +130,29 @@ def test_status_de_job_desconhecido(base_url):
     assert codigo == 404
 
 
-@pytest.mark.parametrize("url", [
-    "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-    "https://m.youtube.com/watch?v=jNQXAC9IVRw",
-    "https://www.youtube.com/shorts/AbCdEfGhIjK",
-    "https://www.youtube.com/live/AbCdEfGhIjK",
-    "https://youtu.be/AbCdEfGhIjK",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://m.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://www.youtube.com/shorts/AbCdEfGhIjK",
+        "https://www.youtube.com/live/AbCdEfGhIjK",
+        "https://youtu.be/AbCdEfGhIjK",
+    ],
+)
 def test_urls_aceitas(url):
     assert server.YOUTUBE_RE.match(url)
 
 
-@pytest.mark.parametrize("url", [
-    "https://exemplo.com/video.mp4",
-    "http://www.youtube.com/watch?v=x",       # http puro
-    "https://youtube.com.evil.com/watch?v=x",  # dominio parecido
-    "https://www.youtube.com/feed/subscriptions",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://exemplo.com/video.mp4",
+        "http://www.youtube.com/watch?v=x",  # http puro
+        "https://youtube.com.evil.com/watch?v=x",  # dominio parecido
+        "https://www.youtube.com/feed/subscriptions",
+    ],
+)
 def test_urls_recusadas(url):
     assert not server.YOUTUBE_RE.match(url)
 
@@ -158,12 +162,26 @@ def test_urls_recusadas(url):
 
 def test_cookies_viram_formato_netscape(tmp_path, monkeypatch):
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    caminho = server.escrever_cookies([
-        {"domain": ".youtube.com", "path": "/", "secure": True,
-         "expires": 1800000000.5, "name": "SID", "value": "abc123"},
-        {"domain": "www.youtube.com", "path": "/x", "secure": False,
-         "expires": None, "name": "PREF", "value": "f6=4"},
-    ])
+    caminho = server.escrever_cookies(
+        [
+            {
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "expires": 1800000000.5,
+                "name": "SID",
+                "value": "abc123",
+            },
+            {
+                "domain": "www.youtube.com",
+                "path": "/x",
+                "secure": False,
+                "expires": None,
+                "name": "PREF",
+                "value": "f6=4",
+            },
+        ]
+    )
     try:
         linhas = Path(caminho).read_text(encoding="utf-8").strip().split("\n")
     finally:
@@ -172,19 +190,35 @@ def test_cookies_viram_formato_netscape(tmp_path, monkeypatch):
     assert linhas[0] == "# Netscape HTTP Cookie File"
     # dominio, includeSubdomains, path, secure, expiry, nome, valor
     assert linhas[1].split("\t") == [
-        ".youtube.com", "TRUE", "/", "TRUE", "1800000000", "SID", "abc123"]
+        ".youtube.com",
+        "TRUE",
+        "/",
+        "TRUE",
+        "1800000000",
+        "SID",
+        "abc123",
+    ]
     # sem ponto na frente => nao vale para subdominios
     assert linhas[2].split("\t") == [
-        "www.youtube.com", "FALSE", "/x", "FALSE", "0", "PREF", "f6=4"]
+        "www.youtube.com",
+        "FALSE",
+        "/x",
+        "FALSE",
+        "0",
+        "PREF",
+        "f6=4",
+    ]
 
 
 def test_cookies_invalidos_sao_descartados(tmp_path, monkeypatch):
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    caminho = server.escrever_cookies([
-        {"domain": "", "name": "sem_dominio", "value": "x"},
-        {"domain": ".youtube.com", "value": "sem_nome"},
-        {"domain": ".youtube.com", "name": "bom", "value": "v"},
-    ])
+    caminho = server.escrever_cookies(
+        [
+            {"domain": "", "name": "sem_dominio", "value": "x"},
+            {"domain": ".youtube.com", "value": "sem_nome"},
+            {"domain": ".youtube.com", "name": "bom", "value": "v"},
+        ]
+    )
     try:
         conteudo = Path(caminho).read_text(encoding="utf-8")
     finally:
