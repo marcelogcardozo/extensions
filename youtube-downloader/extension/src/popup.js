@@ -79,7 +79,7 @@ function etapaDoJob(job) {
   if (job.status === "queued") {
     return job.posicao > 1 ? `Na fila · ${job.posicao}º` : "Na fila · é o próximo";
   }
-  if (job.status === "starting") return "Consultando o YouTube...";
+  if (job.status === "starting") return "Consultando o vídeo...";
   if (job.status === "merging") return "Juntando vídeo e áudio...";
 
   // O YouTube entrega as faixas separadas, entao o yt-dlp baixa duas vezes.
@@ -90,8 +90,31 @@ function etapaDoJob(job) {
   return [rotulo, ...partes.filter(Boolean)].join(" · ");
 }
 
-function urlDoVideo(id) {
-  return `https://www.youtube.com/watch?v=${id}`;
+function urlDoVideo(video) {
+  return video.url ?? `https://www.youtube.com/watch?v=${video.id}`;
+}
+
+// O "Continuar" de um interrompido so conhece o id (esta no nome do arquivo).
+// Para o YouTube isso basta; o Panda precisa da URL inteira, entao ela fica
+// guardada aqui no momento do download.
+async function lembrarUrl(video) {
+  try {
+    const { urls = {} } = await chrome.storage.local.get("urls");
+    urls[video.id] = urlDoVideo(video);
+    await chrome.storage.local.set({ urls });
+  } catch {
+    // Sem storage, o Continuar so funciona para o YouTube.
+  }
+}
+
+async function videoDoInterrompido(id, titulo) {
+  try {
+    const { urls = {} } = await chrome.storage.local.get("urls");
+    if (urls[id]) return { id, url: urls[id], titulo };
+  } catch {
+    // cai no YouTube
+  }
+  return { id, titulo };
 }
 
 // ---------------------------------------------------------------- deteccao
@@ -106,13 +129,40 @@ function varrerPagina() {
     /^https?:\/\/(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\/([\w-]{11})/;
 
   for (const frame of document.querySelectorAll("iframe")) {
+    const titulo = (frame.title || "").replace(/^Player for\s*/i, "").trim();
+
     const m = (frame.src || "").match(padrao);
-    if (!m || vistos.has(m[1])) continue;
-    vistos.add(m[1]);
-    achados.push({
-      id: m[1],
-      titulo: (frame.title || "").replace(/^Player for\s*/i, "").trim(),
-    });
+    if (m) {
+      if (!vistos.has(m[1])) {
+        vistos.add(m[1]);
+        achados.push({ id: m[1], titulo });
+      }
+      continue;
+    }
+
+    // Panda Video: o iframe e so o player. O video e uma playlist HLS publica,
+    // cujo endereco sai do id (?v=) e da biblioteca (no host, ou em ?l=).
+    try {
+      const u = new URL(frame.src);
+      if (!/(^|\.)pandavideo\.com\.br$/.test(u.hostname)) continue;
+      const id = u.searchParams.get("v");
+      const biblioteca =
+        u.hostname.match(/vz-[a-z0-9]{8}-[a-z0-9]{3}/)?.[0] ?? u.searchParams.get("l");
+      if (!id || !biblioteca || vistos.has(id)) continue;
+      vistos.add(id);
+      achados.push({
+        id,
+        // O iframe do Panda costuma vir sem title; plataformas de curso
+        // põem o nome da aula num <h2> perto do player.
+        titulo:
+          titulo ||
+          document.querySelector("main h2, h2")?.textContent.trim() ||
+          document.title.trim(),
+        url: `https://b-${biblioteca}.tv.pandavideo.com.br/${id}/playlist.m3u8`,
+      });
+    } catch {
+      // src vazio ou invalido
+    }
   }
   return achados;
 }
@@ -175,19 +225,25 @@ campoQualidade.addEventListener("change", () => {
   chrome.storage.local.set({ qualidade: campoQualidade.value }).catch(() => {});
 });
 
-async function baixar(id, nome = "") {
+async function baixar(video, nome = "") {
+  // Cookies do YouTube so servem ao YouTube.
+  const youtube = !video.url;
   const r = await fetch(`${SERVIDOR}/download`, {
     method: "POST",
     headers: JSON_CABECALHO,
     body: JSON.stringify({
-      url: urlDoVideo(id),
+      url: urlDoVideo(video),
       nome,
+      // Nome de arquivo para quando o servidor nao tem um titulo melhor.
+      titulo: video.titulo,
       qualidade: campoQualidade.value,
-      cookies: await coletarCookies(),
+      cookies: youtube ? await coletarCookies() : [],
     }),
   });
   const dados = await r.json();
   if (!r.ok) throw new Error(dados.error ?? "falha na requisição");
+
+  await lembrarUrl(video);
 
   // Quem mantem o badge do icone vivo com a popup fechada.
   chrome.runtime.sendMessage({ tipo: "acompanhar" }).catch(() => {});
@@ -239,7 +295,7 @@ function criarLinhaAndamento(job) {
 }
 
 function atualizarLinhaAndamento(linha, job) {
-  linha.querySelector(".nome").textContent = job.title || "Vídeo do YouTube";
+  linha.querySelector(".nome").textContent = job.title || "Vídeo";
   linha.querySelector(".etapa").textContent = etapaDoJob(job);
   linha.querySelector(".barra > div").style.width = `${job.percent ?? 0}%`;
 }
@@ -260,7 +316,7 @@ function criarLinhaInterrompida(item) {
     try {
       // O nome original, e nao o que estiver no campo: o parcial no disco
       // usa esse nome, e mudar de nome faria o download recomecar do zero.
-      await baixar(item.id, item.titulo);
+      await baixar(await videoDoInterrompido(item.id, item.titulo), item.titulo);
     } catch (erro) {
       mostrar(erro.message, "erro");
       e.target.disabled = false;
@@ -314,7 +370,7 @@ function atualizarBotao(ativos) {
 
   if (!videos.length) {
     botao.disabled = true;
-    botao.textContent = "Nenhum vídeo do YouTube nesta página";
+    botao.textContent = "Nenhum vídeo compatível nesta página";
     return;
   }
   if (!servidorOk) {
@@ -439,7 +495,7 @@ botao.addEventListener("click", async () => {
   mostrar("Falando com o servidor local...");
 
   try {
-    const dados = await baixar(video.id, campoNome.value);
+    const dados = await baixar(video, campoNome.value);
     if (dados.ja_em_andamento) mostrar("Este vídeo já estava baixando.");
   } catch (e) {
     mostrar(e.message, "erro");
@@ -455,7 +511,7 @@ async function iniciar() {
 
   if (!videos.length) {
     titulo.textContent = "";
-    dica = "Abra um vídeo do YouTube ou uma página que tenha um embutido.";
+    dica = "Abra um vídeo do YouTube ou uma página que tenha um (do YouTube ou do Panda Video) embutido.";
     mostrar(dica);
   } else if (videos.length > 1) {
     seletor.innerHTML = "";

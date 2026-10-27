@@ -641,6 +641,36 @@ def test_modelo_dobra_o_por_cento():
     assert server.modelo_de_saida("100% AWS") == "100%% AWS [%(id)s].%(ext)s"
 
 
+PANDA_URL = (
+    "https://b-vz-8842b2a0-fa8.tv.pandavideo.com.br/"
+    "e49ad905-c9db-4b0b-aeb7-f7fea73442e0/playlist.m3u8"
+)
+
+
+def test_panda_so_aceita_a_playlist_do_proprio_dominio():
+    assert server.PANDA_RE.match(PANDA_URL)
+    assert not server.PANDA_RE.match(PANDA_URL.replace("pandavideo.com.br", "evil.com"))
+    assert not server.PANDA_RE.match(
+        "https://evil.com/?https://b-vz-8842b2a0-fa8.tv.pandavideo.com.br/x"
+    )
+
+
+def test_modelo_usa_o_uuid_do_panda_no_lugar_do_id_do_ytdlp():
+    uuid = "e49ad905-c9db-4b0b-aeb7-f7fea73442e0"
+    modelo = server.modelo_de_saida("Aula 1", uuid)
+    assert modelo == f"Aula 1 [{uuid}].%(ext)s"
+    # E a varredura de parciais enxerga esse id no nome do arquivo.
+    assert server.ID_NO_NOME.search(modelo).group(1) == uuid
+
+
+def test_id_da_url_cobre_youtube_e_panda():
+    assert (
+        server.id_da_url("https://www.youtube.com/watch?v=abcdefghijk") == "abcdefghijk"
+    )
+    assert server.id_da_url(PANDA_URL) == "e49ad905-c9db-4b0b-aeb7-f7fea73442e0"
+    assert server.id_da_url("https://exemplo.com/") is None
+
+
 @pytest.mark.parametrize("nome", [None, "Aula 04"])
 def test_modelo_sempre_guarda_o_id_no_nome(nome):
     """A varredura de parciais descobre o video pelo [id] no nome."""

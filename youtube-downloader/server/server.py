@@ -58,6 +58,16 @@ YOUTUBE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Panda Video: plataformas de curso embutem o player num iframe, mas o video
+# em si e uma playlist HLS publica neste endereco. O yt-dlp nao tem extrator
+# para o player, so para a playlist (pelo extrator generico) - por isso a
+# extensao monta esta URL a partir do iframe.
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+PANDA_RE = re.compile(
+    rf"^https://b-vz-[a-z0-9]{{8}}-[a-z0-9]{{3}}\.tv\.pandavideo\.com\.br/({UUID})/playlist\.m3u8$",
+    re.IGNORECASE,
+)
+
 # Quantos downloads rodam ao mesmo tempo. Um, por padrao: dois downloads de
 # 800 MB dividem a mesma banda e terminam os dois mais tarde do que se
 # tivessem ido em sequencia.
@@ -75,8 +85,14 @@ RETENCAO_S = 3600
 
 # O id do video tem 11 caracteres e aparece entre colchetes no nome do
 # arquivo. E por ele que a gente descobre a que video um parcial pertence.
-ID_NO_NOME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
-ID_NA_URL = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
+ID_NO_NOME = re.compile(rf"\[([A-Za-z0-9_-]{{11}}|{UUID})\]")
+ID_NA_URL = re.compile(rf"[?&]v=([A-Za-z0-9_-]{{11}})|/({UUID})/playlist\.m3u8")
+
+
+def id_da_url(url):
+    achado = ID_NA_URL.search(url or "")
+    return (achado.group(1) or achado.group(2)) if achado else None
+
 
 # Na pasta de trabalho tudo e parcial por definicao. Ja na pasta de saida
 # (onde versoes antigas deixaram sobras) so estes padroes contam - assim um
@@ -180,9 +196,9 @@ def listar_interrompidos():
     """
     with jobs_lock:
         em_curso = {
-            m.group(1)
+            m
             for j in jobs.values()
-            if j.get("status") in ATIVOS and (m := ID_NA_URL.search(j.get("url") or ""))
+            if j.get("status") in ATIVOS and (m := id_da_url(j.get("url")))
         }
 
     saida = []
@@ -397,7 +413,7 @@ def nome_de_arquivo(bruto):
     return limpo or None
 
 
-def modelo_de_saida(nome):
+def modelo_de_saida(nome, video_id=None):
     """Template do yt-dlp para o arquivo final.
 
     O "[id]" fica sempre: e por ele que a varredura de parciais descobre a
@@ -405,7 +421,9 @@ def modelo_de_saida(nome):
     senao o yt-dlp leria "%(title)s" digitado por engano como template.
     """
     inicio = nome.replace("%", "%%") if nome else "%(title)s"
-    return f"{inicio} [%(id)s].%(ext)s"
+    # Na playlist do Panda o "id" do yt-dlp e sempre "playlist"; o id de
+    # verdade (o uuid) vem da URL.
+    return f"{inicio} [{video_id or '%(id)s'}].%(ext)s"
 
 
 def faixa_do_formato(formato):
@@ -475,6 +493,7 @@ def iniciar_trabalhadores():
 
 
 def download(job_id, url, cookies, nome=None, qualidade=QUALIDADE_PADRAO):
+    panda = PANDA_RE.match(url)
     # O progresso e do download inteiro, nao de cada faixa: somando os
     # tamanhos previstos, a barra anda de 0 a 100 uma vez so.
     plano = {"faixas": 1, "total": None, "concluidos": 0, "bytes_prontos": 0}
@@ -517,7 +536,7 @@ def download(job_id, url, cookies, nome=None, qualidade=QUALIDADE_PADRAO):
     registrador = Registrador()
 
     opts = {
-        "outtmpl": modelo_de_saida(nome),
+        "outtmpl": modelo_de_saida(nome, panda.group(1) if panda else None),
         "paths": {"home": str(OUTPUT_DIR), "temp": str(TRABALHO_DIR)},
         "format": FORMATOS.get(qualidade, FORMATO),
         "merge_output_format": "mp4",
@@ -534,7 +553,9 @@ def download(job_id, url, cookies, nome=None, qualidade=QUALIDADE_PADRAO):
         TRABALHO_DIR.mkdir(parents=True, exist_ok=True)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            set_job(job_id, title=info.get("title", ""))
+            # O titulo do extrator generico seria "playlist"; o nome vem da
+            # extensao (ver do_POST).
+            set_job(job_id, title=nome if panda else info.get("title", ""))
 
             faixas = info.get("requested_formats") or [info]
             tamanhos = [tamanho_do_formato(f) for f in faixas]
@@ -730,9 +751,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "corpo invalido"}, origin)
             return
 
-        if not YOUTUBE_RE.match(url):
-            self._send(400, {"error": "nao e uma URL de video do YouTube"}, origin)
+        panda = PANDA_RE.match(url)
+        if not (panda or YOUTUBE_RE.match(url)):
+            self._send(
+                400,
+                {"error": "nao e uma URL de video do YouTube ou do Panda Video"},
+                origin,
+            )
             return
+        if panda:
+            # Sem trilha so de audio: o HLS do Panda traz audio e video juntos.
+            if qualidade == "audio":
+                self._send(
+                    400, {"error": "o Panda Video nao tem trilha so de audio"}, origin
+                )
+                return
+            # Sem nome, o arquivo sairia "playlist [uuid].mp4".
+            nome = nome or nome_de_arquivo(corpo.get("titulo")) or "Panda Video"
 
         limpar_jobs_antigos()
 
