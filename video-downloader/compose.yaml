@@ -1,8 +1,8 @@
 services:
   server:
     build: ./server
-    image: youtube-downloader-server
-    container_name: youtube-downloader
+    image: video-downloader-server
+    container_name: video-downloader
 
     # O "127.0.0.1:" na frente NAO e decorativo: sem ele o Docker publica a
     # porta em 0.0.0.0 e qualquer maquina da rede local alcanca o servidor.

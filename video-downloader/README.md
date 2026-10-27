@@ -1,7 +1,7 @@
-# YouTube Downloader Helper
+# Video Downloader Helper
 
-Extensão de Chrome/Edge que baixa o vídeo da aba atual do YouTube — inclusive
-quando ele está embutido num `<iframe>`, como nas plataformas de curso. Tudo
+Extensão de Chrome/Edge que baixa o vídeo da aba atual do YouTube ou do Panda Video —
+inclusive quando ele está embutido num `<iframe>`, como nas plataformas de curso. Tudo
 acontece na sua máquina; nada é enviado para fora dela.
 
 ## Como funciona
@@ -36,7 +36,7 @@ que não diz o que faltou. É isso que a imagem resolve — não o Python sozinh
 mas a combinação.
 
 ```bash
-cd youtube-downloader
+cd video-downloader
 cp .env.example .env        # no Windows: copy .env.example .env
 ```
 
@@ -78,7 +78,8 @@ Não há build: a pasta `extension/` é carregável direto.
 ## Uso
 
 1. Deixe o servidor rodando
-2. Abra o vídeo — no YouTube ou numa página que o tenha embutido
+2. Abra o vídeo — no YouTube ou numa página que o tenha embutido (YouTube ou
+   Panda Video)
 3. Clique no ícone da extensão → **Baixar vídeo**
 
 Se a página tiver mais de um vídeo, aparece uma lista para escolher. Se você
@@ -254,7 +255,8 @@ duas regras combinadas:
    carrega `Origin` — barrado pela regra 1. Isso fecha também o buraco das
    *simple requests* (um `POST` com `text/plain` não gera preflight).
 
-Além disso, só URLs de vídeo do YouTube passam da validação.
+Além disso, só URLs de vídeo do YouTube e playlists do Panda Video passam da
+validação.
 
 O que isso **não** protege: outro programa rodando na sua máquina pode falar
 com o servidor à vontade, já que basta mandar o cabeçalho. Para um ambiente
@@ -293,7 +295,7 @@ URL e a cadeia de formatos.
 |---|---|
 | `Sign in to confirm you're not a bot` | Faça login no YouTube nesse perfil do Chrome; a extensão usa esses cookies. |
 | `Video unavailable` num vídeo embutido | O dono pode ter restringido a reprodução ao site de origem. Tente abrir o vídeo direto no YouTube. |
-| `Nenhum vídeo do YouTube nesta página` | O player pode não ser do YouTube, ou o iframe só aparece depois de dar play — dê play e reabra a popup. |
+| `Nenhum vídeo compatível nesta página` | O player pode não ser do YouTube nem do Panda Video, ou o iframe só aparece depois de dar play — dê play e reabra a popup. |
 | `Requested format is not available` | Quase sempre é o desafio JS. No Docker não deveria acontecer; no modo nativo, confira se o `node` está no PATH e se o `yt-dlp-ejs` está instalado. O erro vem com os avisos do `yt-dlp` e a lista de formatos. |
 | `403` no log do servidor | Versões desencontradas: reinicie o servidor e clique em ⟳ na extensão. |
 | `A porta 8756 já está em uso` | Já tem um servidor rodando (talvez um container). `docker compose down` ou feche a janela do `.bat`. |
@@ -315,3 +317,10 @@ de extração se resolve atualizando:
   Termos de Serviço do YouTube; redistribuir material protegido é outra
   história e não é o que isto faz.
 - Não funciona em vídeos com DRM (filmes alugados do YouTube).
+
+## Panda Video
+
+Plataformas de curso costumam usar o Panda Video. O iframe é só o player; a
+extensão monta a URL da playlist HLS a partir dele e o `yt-dlp` baixa essa
+playlist. Não precisa de cookies. Não existe a opção **Só áudio** nesse caso,
+porque o Panda entrega áudio e vídeo juntos.

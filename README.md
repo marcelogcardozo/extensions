@@ -9,7 +9,7 @@ transparentes no que fazem e úteis fora de uma demonstração bonita.
 
 | Projeto | Descrição | Navegadores |
 |---|---|---|
-| [youtube-downloader](youtube-downloader/) | Baixa vídeos da aba atual ou de players do YouTube embutidos, usando `yt-dlp` localmente | Chrome, Edge |
+| [video-downloader](video-downloader/) | Baixa vídeos da aba atual ou de players embutidos (YouTube e Panda Video), usando `yt-dlp` localmente | Chrome, Edge |
 
 ## Como explorar
 
@@ -28,7 +28,7 @@ extensions/
 ```
 
 Os projetos são versionados separadamente. Por exemplo, uma versão do
-`youtube-downloader` é marcada como `youtube-downloader/v1.1.0`, sem obrigar
+`video-downloader` é marcada como `video-downloader/v1.1.0`, sem obrigar
 as outras extensões a acompanhar o mesmo ciclo.
 
 ## Desenvolvimento
